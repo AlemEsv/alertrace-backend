@@ -40,6 +40,7 @@ class UserProfile(BaseModel):
     rol: str
     id_empresa: int
     empresa_nombre: str
+    user_type: str
 
     model_config = ConfigDict(from_attributes=True) # Para Pydantic v2
     # Para Pydantic v1, usa:

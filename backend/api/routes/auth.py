@@ -230,6 +230,8 @@ async def read_users_me(
         # Busca la empresa asociada para obtener su nombre
         empresa_asociada = db.query(Empresa).filter(Empresa.id_empresa == perfil_trabajador.id_empresa).first()
 
+        user_type = "empresa" if perfil_trabajador.rol == "admin_empresa" else "trabajador"
+        
         # Construye la respuesta final con el modelo Pydantic UserProfile
         user_profile_data = {
             "id_trabajador": perfil_trabajador.id_trabajador,
@@ -239,7 +241,8 @@ async def read_users_me(
             "email": perfil_trabajador.email,
             "rol": perfil_trabajador.rol,
             "id_empresa": perfil_trabajador.id_empresa,
-            "empresa_nombre": empresa_asociada.razon_social if empresa_asociada else "Sin empresa asignada"
+            "empresa_nombre": empresa_asociada.razon_social if empresa_asociada else "Sin empresa asignada",
+            "user_type": user_type
         }
         return user_profile_data
 
