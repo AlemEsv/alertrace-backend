@@ -18,3 +18,5 @@ Backend de la plataforma AlerTrace con FastAPI y PostgreSQL.
 git clone https://github.com/AlemEsv/alertrace-backend.git
 cd alertrace-backend
 ```
+
+version: 1.0.0
