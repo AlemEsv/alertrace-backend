@@ -21,6 +21,7 @@ class LoginRequest(BaseModel):
 router = APIRouter()
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 logging.basicConfig(level=logging.INFO)
+# Updated: 2025-10-29 - Fixed user registration with empresa field
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
