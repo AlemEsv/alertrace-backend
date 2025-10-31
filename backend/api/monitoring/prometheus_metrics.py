@@ -75,17 +75,18 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
                 error_type=type(exc).__name__,
                 endpoint=request.url.path
             ).inc()
-            active_connections.dec()
             raise
         finally:
             # Calculate duration
             duration = time.time() - start_time
-            
-            # Record metrics
+
+            # Usa 500 si response es None (hubo excepción antes de asignarlo)
+            status_code = response.status_code if response else 500
+
             request_count.labels(
                 method=request.method,
                 endpoint=request.url.path,
-                status_code=response.status_code
+                status_code=status_code
             ).inc()
             
             request_duration.labels(
