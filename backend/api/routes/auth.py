@@ -68,13 +68,25 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
         db.commit()
         return {"message": "Usuario y empresa registrados exitosamente.", "user_id": user_id, "email": user_data.email}
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         error_message = str(e)
-        if "already exists" in error_message.lower() or "email" in error_message.lower():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Este email ya está registrado")
-        logging.error(f"Error en el registro: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ocurrió un error inesperado durante el registro.")
+        logging.error(f"Error en el registro: {e}", exc_info=True)
+        
+        # Mensajes de error más específicos
+        if "already exists" in error_message.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Este email ya esta registrado")
+        elif "foreign key" in error_message.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error de clave foranea en la base de datos: {error_message}")
+        elif "not null" in error_message.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Campo requerido faltante: {error_message}")
+        elif "unique constraint" in error_message.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Valor duplicado: {error_message}")
+        else:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error en el registro: {error_message}")
 
 
 @router.post("/token", response_model=Token)

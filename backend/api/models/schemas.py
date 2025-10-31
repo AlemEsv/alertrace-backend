@@ -258,16 +258,6 @@ class CultivoResponse(BaseModel):
     coordenadas_lng: Optional[float] = None
 
 
-# Modelos para usuarios
-class UserCreate(BaseModel):
-    """Modelo para crear un nuevo usuario"""
-    username: str
-    nombre: str
-    email: str
-    password: str
-    rol: str = "agricultor"
-
-
 # Modelos para alertas
 class AlertaCreate(BaseModel):
     """Modelo para crear una nueva alerta"""

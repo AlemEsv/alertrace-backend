@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM python:3.11-slim as builder
 
 WORKDIR /build
@@ -36,10 +35,6 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=appuser:appuser backend/api/ ./api/
 COPY --chown=appuser:appuser backend/database/ ./database/
 
-# Copiar script de inicio
-COPY --chown=appuser:appuser start.sh ./
-RUN chmod +x start.sh
-
 # Cambiar a usuario no-root
 USER appuser
 
@@ -53,5 +48,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/health')"
 
-# Comando por defecto
-CMD ["sh", "start.sh"]
+# Comando por defecto - Se puede sobrescribir en docker-compose.yml
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
