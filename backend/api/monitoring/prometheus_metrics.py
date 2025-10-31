@@ -66,9 +66,10 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         
         # Record request start
         active_connections.inc()
-        
+        response = None
         try:
             response = await call_next(request)
+            return response
         except Exception as exc:
             error_count.labels(
                 error_type=type(exc).__name__,
