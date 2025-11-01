@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from supabase import create_client, Client
-from pydantic import BaseModel, EmailStr, field_validator, ValidationError
+from pydantic import BaseModel, EmailStr, field_validator, ValidationError, model_validator
+from typing import Optional
 
 from database.connection import get_db
 from database.models.database import Trabajador, Empresa
@@ -15,13 +16,26 @@ import json
 
 # Modelo para login con JSON
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    username: Optional[EmailStr] = None  # Alias para compatibilidad con el frontend
     password: str
     
-    @field_validator('email')
+    @model_validator(mode='after')
+    def check_email_or_username(self):
+        """Valida que al menos uno de email o username esté presente"""
+        if not self.email and not self.username:
+            raise ValueError('Debe proporcionar email o username')
+        # Si viene username pero no email, copiar username a email
+        if self.username and not self.email:
+            self.email = self.username
+        return self
+    
+    @field_validator('email', 'username')
     @classmethod
-    def email_must_be_valid(cls, v: str) -> str:
+    def email_must_be_valid(cls, v: Optional[str]) -> Optional[str]:
         """Valida que el email tenga un formato correcto"""
+        if v is None:
+            return v
         if not v or '@' not in v:
             raise ValueError('Email inválido')
         return v.lower().strip()
