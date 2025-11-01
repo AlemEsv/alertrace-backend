@@ -208,56 +208,26 @@ async def login(request: Request, db: Session = Depends(get_db)):
         supabase_user = session.user
         user_id = supabase_user.id if supabase_user else None
         
-        # Verificar si el trabajador ya existe
+        # Verificar que el trabajador exista en la base de datos
         trabajador_existente = db.query(Trabajador).filter(Trabajador.user_id == user_id).first()
         
-        if not trabajador_existente and user_id:
-            try:
-                # Crear un nuevo trabajador automáticamente para este usuario
-                # Usar nombre y apellido del email si es posible
-                nombre_parts = credentials.email.split("@")[0].split(".")
-                nombre = nombre_parts[0].capitalize() if len(nombre_parts) > 0 else "Usuario"
-                apellido = nombre_parts[1].capitalize() if len(nombre_parts) > 1 else ""
-                
-                # Generar DNI único basado en UUID
-                dni_unique = str(uuid.uuid4())[:12]  # Primeros 12 caracteres del UUID
-                
-                # Determinar la empresa basada en la empresa (temporalmente)
-                # Buscar si existe una empresa con email similar o usar por defecto
-                empresa = db.query(Empresa).filter(
-                    Empresa.email.like(f"%{credentials.email.split('@')[1]}%")
-                ).first()
-                
-                if not empresa:
-                    # Usar primera empresa disponible si no hay coincidencia
-                    empresa = db.query(Empresa).first()
-                
-                if empresa:
-                    nuevo_trabajador = Trabajador(
-                        id_empresa=empresa.id_empresa,
-                        nombre=nombre,
-                        apellido=apellido,
-                        dni=dni_unique,  # DNI único basado en UUID
-                        email=credentials.email,
-                        rol="agricultor" if "agricultor" in nombre.lower() or "juan" in nombre.lower() else "admin_empresa",
-                        user_id=uuid.UUID(str(user_id)),
-                        activo=True
-                    )
-                    db.add(nuevo_trabajador)
-                    db.commit()
-                    logging.info(f"✅ Nuevo trabajador creado: {credentials.email}")
-            except Exception as e:
-                db.rollback()
-                logging.warning(f"⚠️ No se pudo crear trabajador automáticamente: {e}")
+        if not trabajador_existente:
+            # Si el usuario se autenticó en Supabase pero no tiene perfil de trabajador
+            # esto significa que el registro no se completó correctamente
+            logging.warning(f"Usuario autenticado pero sin perfil de trabajador: {credentials.email}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Usuario no autorizado. Complete el proceso de registro o contacte al administrador.",
+            )
         
-        logging.info(f"✅ Login successful for: {credentials.email}")
+        logging.info(f"Login successful for: {credentials.email}")
         return {"access_token": session.access_token, "token_type": "bearer"}
 
     except HTTPException:
         # Re-lanzar excepciones HTTP tal cual
         raise
     except Exception as e:
-        logging.error(f"❌ Login error: {str(e)}", exc_info=True)
+        logging.error(f"Login error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales incorrectas",
