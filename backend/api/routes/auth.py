@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from supabase import create_client, Client
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator, ValidationError
 
 from database.connection import get_db
 from database.models.database import Trabajador, Empresa
@@ -11,11 +11,28 @@ from api.auth.dependencies import get_current_user
 from ..config import settings
 import logging
 import uuid
+import json
 
 # Modelo para login con JSON
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    
+    @field_validator('email')
+    @classmethod
+    def email_must_be_valid(cls, v: str) -> str:
+        """Valida que el email tenga un formato correcto"""
+        if not v or '@' not in v:
+            raise ValueError('Email inválido')
+        return v.lower().strip()
+    
+    @field_validator('password')
+    @classmethod
+    def password_must_not_be_empty(cls, v: str) -> str:
+        """Valida que la contraseña no esté vacía"""
+        if not v or len(v) < 1:
+            raise ValueError('La contraseña no puede estar vacía')
+        return v
 
 # Configuración del router y cliente de Supabase
 router = APIRouter()
@@ -121,13 +138,46 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 # Alias /login para compatibilidad con el frontend (acepta JSON)
 @router.post("/login", response_model=Token)
-async def login(credentials: LoginRequest, db: Session = Depends(get_db)):
+async def login(request: Request, db: Session = Depends(get_db)):
     """
     Inicia sesión de un usuario con JSON y devuelve un token JWT.
     Acepta datos en formato JSON (content-type: application/json).
     Si es el primer login, crea automáticamente un registro de trabajador.
     """
     try:
+        # Leer el cuerpo de la solicitud para debugging
+        body = await request.body()
+        logging.info(f"📨 Login request body: {body.decode('utf-8')}")
+        
+        # Parsear y validar los datos
+        try:
+            body_json = await request.json()
+            logging.info(f"Parsed JSON: {body_json}")
+            credentials = LoginRequest(**body_json)
+        except ValidationError as ve:
+            logging.error(f"Validation error: {ve.errors()}")
+            error_details = []
+            for error in ve.errors():
+                field = error.get('loc', ['unknown'])[0]
+                msg = error.get('msg', 'Invalid value')
+                error_details.append(f"{field}: {msg}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": "Datos de login inválidos",
+                    "errors": error_details,
+                    "hint": "Asegúrate de enviar 'email' (formato válido) y 'password'"
+                }
+            )
+        except json.JSONDecodeError:
+            logging.error("JSON decode error")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="El cuerpo de la solicitud debe ser JSON válido"
+            )
+        
+        logging.info(f"Attempting login for: {credentials.email}")
+        
         auth_response = supabase.auth.sign_in_with_password({
             "email": credentials.email,
             "password": credentials.password
@@ -186,14 +236,42 @@ async def login(credentials: LoginRequest, db: Session = Depends(get_db)):
                 db.rollback()
                 logging.warning(f"⚠️ No se pudo crear trabajador automáticamente: {e}")
         
+        logging.info(f"✅ Login successful for: {credentials.email}")
         return {"access_token": session.access_token, "token_type": "bearer"}
 
+    except HTTPException:
+        # Re-lanzar excepciones HTTP tal cual
+        raise
     except Exception as e:
+        logging.error(f"❌ Login error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales incorrectas",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+@router.post("/debug-login")
+async def debug_login(request: Request):
+    """
+    Endpoint de debug para ver exactamente qué datos está enviando el frontend.
+    REMOVER EN PRODUCCIÓN.
+    """
+    body = await request.body()
+    try:
+        body_json = await request.json()
+        return {
+            "raw_body": body.decode('utf-8'),
+            "parsed_json": body_json,
+            "headers": dict(request.headers),
+            "content_type": request.headers.get('content-type')
+        }
+    except Exception as e:
+        return {
+            "raw_body": body.decode('utf-8'),
+            "error": str(e),
+            "headers": dict(request.headers)
+        }
 
 
 @router.get("/me", response_model=UserProfile)
