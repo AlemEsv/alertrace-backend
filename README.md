@@ -19,4 +19,4 @@ git clone https://github.com/AlemEsv/alertrace-backend.git
 cd alertrace-backend
 ```
 
-version: 1.0.0
+version: 1.1.0
