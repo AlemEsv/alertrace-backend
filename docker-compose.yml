@@ -1,0 +1,24 @@
+services:
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: alertrace_api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=development
+      - LOG_LEVEL=WARNING
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --log-level warning
+    restart: unless-stopped
+    networks:
+      - alertrace_network
+
+networks:
+  alertrace_network:
+    driver: bridge
