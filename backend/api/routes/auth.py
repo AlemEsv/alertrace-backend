@@ -339,3 +339,210 @@ async def read_users_me(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Ocurrió un error en el servidor al obtener el perfil del usuario."
         )
+
+
+# ========== ALCHEMY ACCOUNT KIT ENDPOINTS ==========
+
+class AlchemyJWTRequest(BaseModel):
+    """Request model para generar JWT de Alchemy"""
+    nonce: Optional[str] = None
+
+    @field_validator('nonce')
+    @classmethod
+    def validate_nonce_format(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Valida que el nonce tenga el formato correcto
+
+        El nonce debe ser sha256(targetPublicKey) sin el prefijo 0x
+        Formato: 64 caracteres hexadecimales
+        """
+        if v is None:
+            return v
+
+        # No debe tener prefijo 0x
+        if v.startswith("0x"):
+            raise ValueError("Nonce no debe tener prefijo 0x")
+
+        # Debe tener 64 caracteres (256 bits en hex)
+        if len(v) != 64:
+            raise ValueError("Nonce debe tener 64 caracteres hexadecimales")
+
+        # Debe ser hexadecimal válido
+        try:
+            int(v, 16)
+        except ValueError:
+            raise ValueError("Nonce debe ser hexadecimal válido")
+
+        return v.lower()
+
+
+class AlchemyJWTResponse(BaseModel):
+    """Response model para JWT de Alchemy"""
+    jwt: str
+    user_id: str
+    email: str
+    expires_in: int = 2592000  # 30 días en segundos
+
+
+@router.post("/alchemy-jwt", response_model=AlchemyJWTResponse)
+async def generate_alchemy_jwt(
+    request: AlchemyJWTRequest,
+    current_user: Trabajador = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Genera JWT firmado con RS256 para autenticación con Alchemy Account Kit
+
+    **Flujo de Autenticación:**
+    1. Usuario ya está autenticado con Supabase (header Authorization)
+    2. Frontend genera targetPublicKey desde Alchemy SDK
+    3. Frontend calcula nonce = sha256(targetPublicKey).slice(2)
+    4. Frontend solicita JWT a este endpoint con el nonce
+    5. Backend genera JWT firmado con RS256 (claves RSA)
+    6. Frontend pasa JWT a Alchemy SDK
+    7. Alchemy verifica JWT con endpoint /jwks
+    8. Alchemy crea/recupera Smart Account del usuario
+
+    **Seguridad:**
+    - Requiere autenticación previa con Supabase JWT
+    - El JWT generado NO se usa para autenticar con este backend
+    - El JWT solo se pasa a Alchemy SDK en el frontend
+    - Alchemy verifica la firma usando nuestro endpoint /jwks
+
+    **Claims del JWT:**
+    - iss: Dominio de nuestra API (settings.api_domain)
+    - sub: UUID del usuario en nuestro sistema
+    - aud: Audience ID de Alchemy Dashboard
+    - nonce: sha256(targetPublicKey) sin 0x
+    - iat: Timestamp de emisión
+    - exp: Timestamp de expiración (30 días)
+
+    Args:
+        request: Contiene el nonce opcional
+        current_user: Usuario autenticado (inyectado por Depends)
+        db: Sesión de base de datos
+
+    Returns:
+        AlchemyJWTResponse: JWT firmado listo para Alchemy
+
+    Raises:
+        HTTPException 401: Si el usuario no está autenticado
+        HTTPException 400: Si el nonce tiene formato inválido
+        HTTPException 500: Si hay error generando el JWT
+    """
+    try:
+        from api.services.alchemy_jwt_service import alchemy_jwt_service
+
+        # Generar JWT para Alchemy
+        jwt_token = alchemy_jwt_service.generate_jwt_for_alchemy(
+            user_id=str(current_user.user_id),
+            email=current_user.email,
+            nonce=request.nonce
+        )
+
+        logging.info(
+            f"Generated Alchemy JWT for user {current_user.email} "
+            f"(user_id: {current_user.user_id}, nonce: {bool(request.nonce)})"
+        )
+
+        return AlchemyJWTResponse(
+            jwt=jwt_token,
+            user_id=str(current_user.user_id),
+            email=current_user.email
+        )
+
+    except ValueError as e:
+        # Error de validación del nonce
+        logging.error(f"Validation error generating Alchemy JWT: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error de validación: {str(e)}"
+        )
+    except Exception as e:
+        # Error inesperado
+        logging.error(f"Error generating Alchemy JWT: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error generando JWT para Alchemy"
+        )
+
+
+@router.post("/link-smart-account")
+async def link_smart_account(
+    smart_account_address: str,
+    blockchain_role: Optional[str] = None,
+    current_user: Trabajador = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Vincula una Smart Account generada por Alchemy al usuario actual
+
+    Este endpoint es llamado por el frontend después de que Alchemy
+    crea la Smart Account del usuario.
+
+    Args:
+        smart_account_address: Dirección Ethereum de la Smart Account (0x...)
+        blockchain_role: Rol del usuario en blockchain (farmer, processor, distributor)
+        current_user: Usuario autenticado
+        db: Sesión de base de datos
+
+    Returns:
+        dict: Confirmación de vinculación exitosa
+
+    Raises:
+        HTTPException 400: Si la dirección es inválida o ya está en uso
+    """
+    try:
+        # Validar formato de dirección Ethereum
+        if not smart_account_address.startswith("0x") or len(smart_account_address) != 42:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Dirección Ethereum inválida. Debe empezar con 0x y tener 42 caracteres"
+            )
+
+        # Normalizar dirección a lowercase
+        smart_account_address = smart_account_address.lower()
+
+        # Verificar que no esté en uso por otro usuario
+        existing = db.query(Trabajador).filter(
+            Trabajador.smart_account_address == smart_account_address
+        ).first()
+
+        if existing and existing.id_trabajador != current_user.id_trabajador:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Esta Smart Account ya está vinculada a otro usuario"
+            )
+
+        # Actualizar usuario
+        current_user.smart_account_address = smart_account_address
+        current_user.blockchain_role = blockchain_role
+        current_user.blockchain_active = True
+        from datetime import datetime
+        current_user.smart_account_linked_at = datetime.now()
+
+        db.commit()
+        db.refresh(current_user)
+
+        logging.info(
+            f"Smart Account linked: user={current_user.email}, "
+            f"address={smart_account_address}, role={blockchain_role}"
+        )
+
+        return {
+            "success": True,
+            "message": "Smart Account vinculada exitosamente",
+            "smart_account_address": smart_account_address,
+            "blockchain_role": blockchain_role,
+            "blockchain_active": True
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error linking smart account: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error vinculando Smart Account"
+        )
