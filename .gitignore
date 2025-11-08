@@ -51,3 +51,9 @@ htmlcov/
 
 # Alembic
 alembic/versions/*.pyc
+
+# RSA Keys for Alchemy 
+keys/*.pem
+keys/alchemy_private_key.pem
+keys/alchemy_public_key.pem
+*.pem
