@@ -7,7 +7,7 @@ from api.monitoring import setup_logging, PrometheusMiddleware, HealthMonitor, s
 from prometheus_client import generate_latest
 
 # Importar los routers modulares
-from api.routes import auth, health
+from api.routes import auth, health, openid
 from api.routes.sensores import router as sensores_router
 from api.routes.cultivos import router as cultivos_router
 from api.routes.dashboard import router as dashboard_router
@@ -76,6 +76,10 @@ api_v1_router.include_router(lots_router, prefix="/lots", tags=["Lots"])
 api_v1_router.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain"])
 
 app.include_router(api_v1_router)
+
+# OpenID Connect endpoints (en la raíz, sin prefijo /api/v1)
+# Requeridos por Alchemy Account Kit para verificar JWTs
+app.include_router(openid.router)
 
 # Health y métricas
 app.include_router(health.router, tags=["Health"])
