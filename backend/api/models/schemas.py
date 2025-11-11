@@ -1,5 +1,5 @@
-from pydantic import BaseModel, EmailStr, ConfigDict
-from typing import Optional
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
+from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
@@ -97,16 +97,13 @@ class SensorResponse(BaseModel):
     
     id_sensor: int
     device_id: str
-    nombre: str
-    tipo: str
+    nombre_sensor: str
+    tipo_sensor: str
     id_empresa: int
-    activo: bool
-    intervalo_lectura: int
-    ultima_lectura: Optional[datetime] = None
-    bateria_nivel: Optional[int] = None
+    estado: str
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
     ubicacion_sensor: Optional[str] = None
-    coordenadas_lat: Optional[float] = None
-    coordenadas_lng: Optional[float] = None
     fecha_instalacion: datetime
 
 
@@ -525,3 +522,70 @@ class BlockchainSyncResponse(BaseModel):
     error_message: Optional[str]
     block_timestamp: datetime
     created_at: datetime
+
+# Schemas para gestión de áreas y sensores
+class SensorUpdate(BaseModel):
+    """Schema para actualizar sensor"""
+    ubicacion_sensor: Optional[str] = None
+    coordenadas_lat: Optional[float] = None
+    coordenadas_lng: Optional[float] = None
+    nombre_sensor: Optional[str] = None
+    descripcion: Optional[str] = None
+    estado: Optional[str] = None
+    
+    @field_validator('ubicacion_sensor')
+    @classmethod
+    def validate_ubicacion(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            # Sanitizar espacios extras y limitar longitud
+            v = v.strip()
+            if len(v) > 128:
+                raise ValueError('ubicacion_sensor no puede exceder 128 caracteres')
+            if len(v) == 0:
+                return None
+        return v
+    
+    @field_validator('coordenadas_lat')
+    @classmethod
+    def validate_lat(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v < -90 or v > 90):
+            raise ValueError('latitud debe estar entre -90 y 90')
+        return v
+    
+    @field_validator('coordenadas_lng')
+    @classmethod
+    def validate_lng(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v < -180 or v > 180):
+            raise ValueError('longitud debe estar entre -180 y 180')
+        return v
+
+
+class SensorMoveRequest(BaseModel):
+    """Schema para mover sensores entre áreas"""
+    from_ubicacion: str
+    to_ubicacion: str
+    sensor_ids: Optional[List[int]] = None
+    
+    @field_validator('from_ubicacion', 'to_ubicacion')
+    @classmethod
+    def validate_ubicacion(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) > 128:
+            raise ValueError('ubicacion no puede exceder 128 caracteres')
+        if len(v) == 0:
+            raise ValueError('ubicacion no puede estar vacía')
+        return v
+
+
+class SensorMoveResponse(BaseModel):
+    """Respuesta de movimiento de sensores"""
+    updated: int
+    errors: List[Dict[str, Any]] = []
+    sensors: List[SensorResponse] = []
+
+
+class DeleteAreaResponse(BaseModel):
+    """Respuesta de eliminación de área"""
+    deleted_ubicacion: str
+    sensors_moved: int
+    new_ubicacion: Optional[str] = None

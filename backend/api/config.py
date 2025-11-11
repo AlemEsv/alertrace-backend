@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
     
     supabase_url: str
     supabase_key: str
+    supabase_service_role_key: Optional[str] = None  # Optional - si no existe, usa supabase_key
 
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"

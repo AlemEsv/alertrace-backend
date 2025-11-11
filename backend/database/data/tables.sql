@@ -41,6 +41,7 @@ CREATE TABLE sensores (
     estado VARCHAR(20) DEFAULT 'activo',
     latitud DECIMAL(10,8),
     longitud DECIMAL(11,8),
+    ubicacion_sensor VARCHAR(128),
     fecha_instalacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CHECK (estado IN ('activo', 'inactivo', 'mantenimiento'))
 );

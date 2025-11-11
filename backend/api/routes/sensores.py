@@ -9,8 +9,14 @@ from database.models.database import (
     Sensor, LecturaSensor, Alerta, ConfiguracionUmbral, 
     Empresa, Trabajador, AsignacionSensor
 )
-from api.models.schemas import SensorData, SensorResponse, LecturaSensorResponse
+from api.models.schemas import (
+    SensorData, SensorResponse, LecturaSensorResponse,
+    SensorUpdate, SensorMoveRequest, SensorMoveResponse, DeleteAreaResponse
+)
 from api.auth.dependencies import get_current_user
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["sensores"])
 
@@ -429,3 +435,221 @@ async def generar_alertas_de_prueba(
         "sensores_analizados": len(sensores),
         "alertas_generadas": total_alertas
     }
+
+
+@router.patch("/{sensor_id}", response_model=SensorResponse)
+async def actualizar_sensor(
+    sensor_id: int,
+    sensor_data: SensorUpdate,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Actualizar propiedades de un sensor"""
+    # Verificar que el sensor existe
+    sensor = db.query(Sensor).filter(Sensor.id_sensor == sensor_id).first()
+    
+    if not sensor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sensor {sensor_id} no encontrado"
+        )
+    
+    # Verificar permisos de la empresa
+    if hasattr(current_user, 'id_empresa'):
+        user_empresa_id = current_user.id_empresa
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario sin empresa asignada"
+        )
+    
+    if sensor.id_empresa != user_empresa_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tiene permisos para modificar este sensor"
+        )
+    
+    # Actualizar solo los campos proporcionados
+    update_data = sensor_data.model_dump(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        setattr(sensor, field, value)
+    
+    try:
+        db.commit()
+        db.refresh(sensor)
+        
+        # Log para auditoría
+        user_id = getattr(current_user, 'id_trabajador', getattr(current_user, 'id_empresa', 'unknown'))
+        logger.info(
+            f"Sensor {sensor_id} actualizado por usuario {user_id}. "
+            f"Campos: {list(update_data.keys())}"
+        )
+        
+        return sensor
+    
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error actualizando sensor {sensor_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al actualizar sensor: {str(e)}"
+        )
+
+
+@router.post("/move", response_model=SensorMoveResponse)
+async def mover_sensores(
+    move_data: SensorMoveRequest,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Mover sensores entre áreas (renombrar ubicación).
+    
+    Si se proporcionan sensor_ids, solo mueve esos sensores.
+    Si no, mueve todos los sensores de from_ubicacion.
+    """
+    updated_count = 0
+    errors = []
+    updated_sensors = []
+    
+    try:
+        # Obtener id_empresa del usuario
+        if hasattr(current_user, 'id_empresa'):
+            user_empresa_id = current_user.id_empresa
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Usuario sin empresa asignada"
+            )
+        
+        # Construir query base
+        query = db.query(Sensor).filter(
+            Sensor.id_empresa == user_empresa_id,
+            Sensor.ubicacion_sensor == move_data.from_ubicacion
+        )
+        
+        # Filtrar por IDs específicos si se proporcionan
+        if move_data.sensor_ids:
+            query = query.filter(Sensor.id_sensor.in_(move_data.sensor_ids))
+        
+        sensores = query.all()
+        
+        if not sensores:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No se encontraron sensores en '{move_data.from_ubicacion}'"
+            )
+        
+        # Actualizar cada sensor
+        for sensor in sensores:
+            try:
+                sensor.ubicacion_sensor = move_data.to_ubicacion
+                updated_sensors.append(sensor)
+                updated_count += 1
+            except Exception as e:
+                errors.append({
+                    "sensor_id": sensor.id_sensor,
+                    "error": str(e)
+                })
+        
+        db.commit()
+        
+        # Log para auditoría
+        user_id = getattr(current_user, 'id_trabajador', getattr(current_user, 'id_empresa', 'unknown'))
+        logger.info(
+            f"Movidos {updated_count} sensores de '{move_data.from_ubicacion}' "
+            f"a '{move_data.to_ubicacion}' por usuario {user_id}"
+        )
+        
+        return SensorMoveResponse(
+            updated=updated_count,
+            errors=errors,
+            sensors=[SensorResponse.model_validate(s) for s in updated_sensors]
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error moviendo sensores: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al mover sensores: {str(e)}"
+        )
+
+
+@router.delete("/by-ubicacion/{ubicacion}", response_model=DeleteAreaResponse)
+async def eliminar_area(
+    ubicacion: str,
+    move_to: Optional[str] = None,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Eliminar un área y mover sus sensores a otra ubicación o dejarlos sin área.
+    
+    - Si move_to se proporciona, mueve todos los sensores a esa ubicación
+    - Si no, establece ubicacion_sensor = null
+    """
+    try:
+        # Obtener id_empresa del usuario
+        if hasattr(current_user, 'id_empresa'):
+            user_empresa_id = current_user.id_empresa
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Usuario sin empresa asignada"
+            )
+        
+        # Validar move_to si se proporciona
+        if move_to:
+            move_to = move_to.strip()
+            if len(move_to) > 128:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="move_to no puede exceder 128 caracteres"
+                )
+        
+        # Buscar todos los sensores del área
+        sensores = db.query(Sensor).filter(
+            Sensor.id_empresa == user_empresa_id,
+            Sensor.ubicacion_sensor == ubicacion
+        ).all()
+        
+        if not sensores:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No se encontraron sensores en el área '{ubicacion}'"
+            )
+        
+        sensors_moved = len(sensores)
+        
+        # Actualizar ubicación de todos los sensores
+        for sensor in sensores:
+            sensor.ubicacion_sensor = move_to
+        
+        db.commit()
+        
+        # Log para auditoría
+        user_id = getattr(current_user, 'id_trabajador', getattr(current_user, 'id_empresa', 'unknown'))
+        logger.info(
+            f"Área '{ubicacion}' eliminada, {sensors_moved} sensores movidos a "
+            f"'{move_to or 'sin área'}' por usuario {user_id}"
+        )
+        
+        return DeleteAreaResponse(
+            deleted_ubicacion=ubicacion,
+            sensors_moved=sensors_moved,
+            new_ubicacion=move_to
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error eliminando área '{ubicacion}': {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al eliminar área: {str(e)}"
+        )

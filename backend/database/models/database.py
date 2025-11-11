@@ -69,6 +69,7 @@ class Sensor(Base):
     estado = Column(String(20), default='activo')
     latitud = Column(DECIMAL(10, 8))
     longitud = Column(DECIMAL(11, 8))
+    ubicacion_sensor = Column(String(128), nullable=True, index=True)  # Área/ubicación del sensor
     fecha_instalacion = Column(DateTime, default=func.now())
     
     # Relaciones

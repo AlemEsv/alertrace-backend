@@ -48,11 +48,19 @@ class LoginRequest(BaseModel):
             raise ValueError('La contraseña no puede estar vacía')
         return v
 
-# Configuración del router y cliente de Supabase
+# Configuración del router y clientes de Supabase
 router = APIRouter()
+
+def get_admin_client() -> Client:
+    """Obtiene el cliente admin de Supabase con service_role_key"""
+    admin_key = settings.supabase_service_role_key if settings.supabase_service_role_key else settings.supabase_key
+    return create_client(settings.supabase_url, admin_key)
+
+# Cliente normal para operaciones regulares (login, etc)
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
+
 logging.basicConfig(level=logging.INFO)
-# Updated: 2025-10-29 - Fixed user registration with empresa field
+logger = logging.getLogger(__name__)
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
@@ -63,17 +71,29 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     try:
         # Iniciar transacción
         with db.begin_nested():
-            # 1. Crear usuario en Supabase Auth
-            auth_response = supabase.auth.sign_up({
+            # Crear usuario en Supabase Auth usando Admin API
+            supabase_admin = get_admin_client()
+            auth_response = supabase_admin.auth.admin.create_user({
                 "email": user_data.email,
                 "password": user_data.password,
+                "email_confirm": True,  # Auto-confirmar email
+                "user_metadata": {
+                    "nombre": user_data.nombre,
+                    "apellido": user_data.apellido,
+                    "rol": "admin_empresa",
+                    "ruc_empresa": user_data.empresa.ruc
+                }
             })
             
             supabase_user = auth_response.user
             if not supabase_user or not supabase_user.id:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se pudo crear el usuario en el servicio de autenticación.")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se pudo crear el usuario en el servicio de autenticación."
+                )
             
             user_id = supabase_user.id
+            logger.info(f"Usuario creado en Supabase Auth: {user_id}")
 
             # 2. Crear la empresa en la base de datos
             nueva_empresa = Empresa(
@@ -95,9 +115,15 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
                 user_id=user_id  # Vinculación con Supabase Auth
             )
             db.add(nuevo_trabajador)
+            logger.info(f"Trabajador admin creado: {user_data.email}, empresa: {nueva_empresa.id_empresa}")
         
         db.commit()
-        return {"message": "Usuario y empresa registrados exitosamente.", "user_id": user_id, "email": user_data.email}
+        return {
+            "message": "Usuario y empresa registrados exitosamente.",
+            "user_id": str(user_id),
+            "email": user_data.email,
+            "empresa_id": nueva_empresa.id_empresa
+        }
 
     except HTTPException:
         db.rollback()
@@ -105,19 +131,34 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         error_message = str(e)
-        logging.error(f"Error en el registro: {e}", exc_info=True)
+        logger.error(f"Error en el registro: {e}", exc_info=True)
         
         # Mensajes de error más específicos
-        if "already exists" in error_message.lower():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Este email ya esta registrado")
+        if "already exists" in error_message.lower() or "duplicate" in error_message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Este email ya esta registrado"
+            )
         elif "foreign key" in error_message.lower():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error de clave foranea en la base de datos: {error_message}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error de clave foranea en la base de datos: {error_message}"
+            )
         elif "not null" in error_message.lower():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Campo requerido faltante: {error_message}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Campo requerido faltante: {error_message}"
+            )
         elif "unique constraint" in error_message.lower():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Valor duplicado: {error_message}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Valor duplicado: {error_message}"
+            )
         else:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error en el registro: {error_message}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error en el registro: {error_message}"
+            )
 
 
 @router.post("/token", response_model=Token)

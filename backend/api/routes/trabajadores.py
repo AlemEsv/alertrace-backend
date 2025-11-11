@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 import uuid
+import logging
 
 from database.connection import get_db
 from database.models.database import Trabajador, AsignacionSensor
@@ -14,8 +15,16 @@ router = APIRouter(
     tags=["Trabajadores"]
 )
 
-# Cliente Supabase
-supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
+def get_admin_client() -> Client:
+    """Obtiene el cliente admin de Supabase con service_role_key"""
+    admin_key = settings.supabase_service_role_key if settings.supabase_service_role_key else settings.supabase_key
+    return create_client(settings.supabase_url, admin_key)
+
+def get_supabase_client() -> Client:
+    """Obtiene el cliente normal de Supabase"""
+    return create_client(settings.supabase_url, settings.supabase_key)
+
+logger = logging.getLogger(__name__)
 
 
 # Schemas
@@ -67,10 +76,19 @@ async def crear_trabajador(
         )
     
     try:
-        # Crear usuario en Supabase Auth
-        auth_response = supabase.auth.sign_up({
+        # Crear usuario en Supabase Auth usando Admin API
+        # crea el usuario sin requerir confirmación de email
+        supabase_admin = get_admin_client()
+        auth_response = supabase_admin.auth.admin.create_user({
             "email": trabajador_data.email,
             "password": trabajador_data.password,
+            "email_confirm": True,  # Auto-confirmar el email
+            "user_metadata": {
+                "nombre": trabajador_data.nombre,
+                "apellido": trabajador_data.apellido,
+                "rol": trabajador_data.rol,
+                "id_empresa": current_user.id_empresa
+            }
         })
         
         supabase_user = auth_response.user
@@ -106,7 +124,8 @@ async def crear_trabajador(
                 "nombre": nuevo_trabajador.nombre,
                 "apellido": nuevo_trabajador.apellido,
                 "email": nuevo_trabajador.email,
-                "rol": nuevo_trabajador.rol
+                "rol": nuevo_trabajador.rol,
+                "user_id": str(user_id)
             }
         }
     
@@ -114,6 +133,15 @@ async def crear_trabajador(
         raise
     except Exception as e:
         db.rollback()
+        logger.error(f"Error al crear trabajador: {str(e)}", exc_info=True)
+        
+        # Mensajes de error más específicos
+        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Este email ya está registrado en el sistema de autenticación"
+            )
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al crear trabajador: {str(e)}"
