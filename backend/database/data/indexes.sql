@@ -16,6 +16,7 @@ CREATE INDEX idx_sensores_empresa ON sensores(id_empresa);
 CREATE INDEX idx_sensores_device_id ON sensores(device_id);
 CREATE INDEX idx_sensores_tipo ON sensores(tipo_sensor);
 CREATE INDEX idx_sensores_estado ON sensores(estado);
+CREATE INDEX idx_sensores_ubicacion ON sensores(ubicacion_sensor);
 CREATE INDEX idx_asignaciones_sensor ON asignaciones_sensores(id_sensor);
 CREATE INDEX idx_asignaciones_trabajador ON asignaciones_sensores(id_trabajador);
 CREATE INDEX idx_asignaciones_fecha ON asignaciones_sensores(fecha_asignacion);
