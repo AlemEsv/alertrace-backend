@@ -10,6 +10,17 @@ Backend de la plataforma AlerTrace con FastAPI y PostgreSQL.
 - Docker & Docker Compose
 - PostgreSQL 15
 
+## Integraciones
+
+### Tuya Cloud -> Supabase
+
+**Características:**
+- Sincronización manual via API REST
+- Sincronización automática programada
+- Alertas automáticas por umbrales
+- Consulta en tiempo real sin guardar
+- Soporte multi-empresa y multi-sensor
+
 ### Instalación Local
 
 1. **Clonar el repositorio**
