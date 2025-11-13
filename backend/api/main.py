@@ -17,6 +17,7 @@ from api.routes.lots import router as lots_router
 from api.routes.blockchain import router as blockchain_router
 from api.routes.trabajadores import router as trabajadores_router
 from api.routes.asignaciones import router as asignaciones_router
+from api.routes.tuya_sync import router as tuya_sync_router
 
 app = FastAPI(
     title="Alertrace API",
@@ -74,6 +75,7 @@ api_v1_router.include_router(alertas_router, prefix="/alertas", tags=["Alertas"]
 api_v1_router.include_router(farms_router, prefix="/farms", tags=["Farms"])
 api_v1_router.include_router(lots_router, prefix="/lots", tags=["Lots"])
 api_v1_router.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain"])
+api_v1_router.include_router(tuya_sync_router, prefix="/tuya", tags=["Tuya Sync"])
 
 app.include_router(api_v1_router)
 
