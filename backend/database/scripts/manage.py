@@ -62,9 +62,9 @@ class DatabaseManager:
             sensors = db.query(Sensor).count()
             assignments = (
                 db.query(AsignacionSensor)
-                .filter(AsignacionSensor.activa == True)
+                .filter(AsignacionSensor.activa == True)  # noqa: E712
                 .count()
-            )  # noqa: E712
+            )
             readings = db.query(LecturaSensor).count()
             farms = db.query(Farm).count()
             certifications = db.query(FarmCertification).count()
