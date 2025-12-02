@@ -8,7 +8,7 @@ def test_health_check(client):
     data = response.json()
     assert data["status"] == "healthy"
     assert "timestamp" in data
-    assert "uptime" in data or "message" in data
+    assert "api_status" in data or "database_status" in data
 
 
 def test_health_check_contains_required_fields(client):

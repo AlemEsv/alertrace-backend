@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
-from api.models.schemas import (
+from api.models import (
     UserCreate, FarmCreate, SensorCreate, AlertaCreate, LotCreate,
-    HealthCheck, SensorData, EmpresaCreate
+    SensorData, EmpresaCreate
 )
 
 
@@ -19,29 +19,32 @@ def test_empresa_create_schema():
 
 
 def test_user_create_schema():
-    """Test UserCreate schema validation."""
-    user = UserCreate(
-        username="testuser",
-        nombre="Test",
-        email="test@example.com",
-        password="SecurePass123!",
-        rol="agricultor"
-    )
-    assert user.username == "testuser"
-    assert user.nombre == "Test"
+    user_data = {
+        "email": "test@example.com",
+        "password": "password123",
+        "nombre": "Test",
+        "apellido": "User",
+        "dni": "12345678",
+        "empresa": {
+            "ruc": "20123456789",
+            "razon_social": "Test Corp",
+            "email": "corp@test.com"
+        }
+    }
+    user = UserCreate(**user_data)
     assert user.email == "test@example.com"
-    assert user.rol == "agricultor"
+    assert user.nombre == "Test"
 
 
 def test_farm_create_schema():
     """Test FarmCreate schema validation."""
     farm = FarmCreate(
-        farm_name="Test Farm",
-        location_address="Test Location",
+        name="Test Farm",
+        location="Test Location",
         area_hectares=100.5
     )
-    assert farm.farm_name == "Test Farm"
-    assert farm.location_address == "Test Location"
+    assert farm.name == "Test Farm"
+    assert farm.location == "Test Location"
     assert farm.area_hectares == 100.5
 
 
@@ -58,18 +61,6 @@ def test_sensor_create_schema():
     assert sensor.nombre == "Temperature Sensor"
     assert sensor.tipo == "temperature"
     assert sensor.id_cultivo == 1
-
-
-def test_health_check_schema():
-    """Test HealthCheck schema validation."""
-    health = HealthCheck(
-        status="healthy",
-        timestamp=1234567890,
-        version="1.0.0",
-        environment="development"
-    )
-    assert health.status == "healthy"
-    assert health.version == "1.0.0"
 
 
 def test_sensor_data_schema():

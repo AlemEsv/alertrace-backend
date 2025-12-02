@@ -21,14 +21,14 @@ class TestAuthenticationFlow:
     def test_auth_endpoints_exist(self, client):
         """Test that auth endpoints are accessible."""
         # Login endpoint
-        response = client.post("/auth/login", json={})
+        response = client.post("/api/v1/auth/login", json={})
         # Should return either validation error or auth error, not 404
         assert response.status_code != 404
 
     def test_protected_endpoints_require_auth(self, client):
         """Test that protected endpoints require authentication."""
         # Try accessing protected endpoint without auth
-        response = client.get("/farms")
+        response = client.get("/api/v1/farms")
         # Should return 401/403 or 422, not 404
         assert response.status_code in [401, 403, 422, 404]
 
@@ -38,13 +38,13 @@ class TestFarmEndpoints:
 
     def test_farms_endpoint_accessible(self, client, auth_headers):
         """Test that farms endpoint is accessible."""
-        response = client.get("/farms", headers=auth_headers)
+        response = client.get("/api/v1/farms", headers=auth_headers)
         # Should return 200 (with farms) or 401 (if auth fails)
         assert response.status_code in [200, 401, 404]
 
     def test_farms_endpoint_returns_list(self, client, auth_headers):
         """Test that farms endpoint returns a list."""
-        response = client.get("/farms", headers=auth_headers)
+        response = client.get("/api/v1/farms", headers=auth_headers)
         if response.status_code == 200:
             data = response.json()
             assert isinstance(data, list) or isinstance(data, dict)
@@ -55,13 +55,13 @@ class TestSensorEndpoints:
 
     def test_sensors_endpoint_accessible(self, client, auth_headers):
         """Test that sensors endpoint is accessible."""
-        response = client.get("/sensores", headers=auth_headers)
+        response = client.get("/api/v1/sensores", headers=auth_headers)
         # Should return 200, 401, or 404
         assert response.status_code in [200, 401, 404]
 
     def test_sensors_create_endpoint(self, client, auth_headers, mock_sensor_data):
         """Test creating a sensor."""
-        response = client.post("/sensores", json=mock_sensor_data, headers=auth_headers)
+        response = client.post("/api/v1/sensores/", json=mock_sensor_data, headers=auth_headers)
         # Accept 201 (created), 401 (auth required), or 422 (validation error)
         assert response.status_code in [201, 401, 422, 400]
 
