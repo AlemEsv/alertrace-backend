@@ -22,16 +22,18 @@ from sqlalchemy.sql import func
 from api.config import settings
 import uuid
 
+
 class GUID(TypeDecorator):
     """Tipo GUID independiente de la plataforma.
     Usa el tipo UUID de PostgreSQL para PostgreSQL, de lo contrario usa
     CHAR(36), almacenando como valores hexadecimales en cadena.
     """
+
     impl = CHAR
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
-        if dialect.name == 'postgresql':
+        if dialect.name == "postgresql":
             return dialect.type_descriptor(PGUUID())
         else:
             return dialect.type_descriptor(CHAR(36))
@@ -39,7 +41,7 @@ class GUID(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return value
-        elif dialect.name == 'postgresql':
+        elif dialect.name == "postgresql":
             return str(value)
         else:
             if not isinstance(value, uuid.UUID):
@@ -55,6 +57,7 @@ class GUID(TypeDecorator):
                 return uuid.UUID(value)
             else:
                 return value
+
 
 # Async Engine
 print(f"Creating Async Engine with URL: {settings.async_database_url}")
