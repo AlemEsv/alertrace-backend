@@ -1,14 +1,18 @@
 from pydantic import BaseModel
 from typing import Optional
 
+
 class DashboardResponse(BaseModel):
     """Modelo para respuesta del dashboard"""
+
     total_cultivos: int
     cultivos_activos: int
     alertas_pendientes: int
 
+
 class DashboardKPIs(BaseModel):
     """KPIs del dashboard"""
+
     sensores_activos: int
     cultivos_monitoreados: int
     alertas_pendientes: int

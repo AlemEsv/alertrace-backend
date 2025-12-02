@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import time
 import os
 from contextlib import asynccontextmanager
-from api.monitoring import setup_logging, PrometheusMiddleware, HealthMonitor, setup_sentry
+from api.monitoring import setup_logging, PrometheusMiddleware, setup_sentry
 from prometheus_client import generate_latest
 
 # Importar los routers modulares
@@ -23,18 +23,20 @@ from api.services.mqtt.service import mqtt
 logger = setup_logging()
 setup_sentry()
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan events"""
     logger.info("Alertrace API v1.1.0 started successfully")
     yield
 
+
 app = FastAPI(
     title="Alertrace API",
     description="Sistema de monitoreo IoT agrícola",
     version="1.1.0",
     redirect_slashes=False,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Inicializar MQTT
@@ -51,6 +53,7 @@ origins = [
 if origins_env := os.getenv("ALLOWED_ORIGINS"):
     origins.extend(origins_env.split(","))
 
+
 # Función para validar orígenes de Vercel
 def allow_vercel_origins(origin: str) -> bool:
     """Permite todos los dominios de Vercel (preview y producción)"""
@@ -62,6 +65,7 @@ def allow_vercel_origins(origin: str) -> bool:
     ]
     return any(origin.startswith(pattern) for pattern in allowed_patterns)
 
+
 # Agregar middleware CORS con soporte para Vercel y desarrollo local
 app.add_middleware(
     CORSMiddleware,
@@ -69,7 +73,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]
+    expose_headers=["*"],
 )
 
 # Crear router
@@ -77,14 +81,20 @@ api_v1_router = APIRouter(prefix="/api/v1")
 
 # Incluir routers con sus prefijos correspondientes
 api_v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
-api_v1_router.include_router(trabajadores_router, prefix="/trabajadores", tags=["Trabajadores"])
-api_v1_router.include_router(asignaciones_router, prefix="/asignaciones", tags=["Asignaciones"])
+api_v1_router.include_router(
+    trabajadores_router, prefix="/trabajadores", tags=["Trabajadores"]
+)
+api_v1_router.include_router(
+    asignaciones_router, prefix="/asignaciones", tags=["Asignaciones"]
+)
 api_v1_router.include_router(sensores_router, prefix="/sensores", tags=["Sensores"])
 api_v1_router.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
 api_v1_router.include_router(alertas_router, prefix="/alertas", tags=["Alertas"])
 api_v1_router.include_router(farms_router, prefix="/farms", tags=["Farms"])
 api_v1_router.include_router(lots_router, prefix="/lots", tags=["Lots"])
-api_v1_router.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain"])
+api_v1_router.include_router(
+    blockchain_router, prefix="/blockchain", tags=["Blockchain"]
+)
 
 app.include_router(api_v1_router)
 app.include_router(realtime_router, tags=["Realtime"])
@@ -104,24 +114,17 @@ def root():
         "api_v1": "/api/v1",
         "health": "/health",
         "metrics": "/metrics",
-        "timestamp": int(time.time())
+        "timestamp": int(time.time()),
     }
 
 
 @app.get("/metrics", tags=["Monitoreo"])
 async def metrics():
     """Endpoint de Prometheus metrics para monitoreo"""
-    return Response(
-        content=generate_latest(),
-        media_type="text/plain; charset=utf-8"
-    )
+    return Response(content=generate_latest(), media_type="text/plain; charset=utf-8")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=8000,
-        log_level="warning"
-    )
+
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")

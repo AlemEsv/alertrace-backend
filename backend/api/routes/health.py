@@ -8,6 +8,7 @@ router = APIRouter()
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
+
 @router.get("/health", response_model=HealthCheckResponse)
 async def health_check(db: DbSession):
     """Verificación de salud del servicio"""

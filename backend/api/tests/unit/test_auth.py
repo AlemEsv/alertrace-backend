@@ -1,6 +1,3 @@
-import pytest
-
-
 def test_login_missing_credentials(client):
     """Test login fails with missing credentials."""
     response = client.post("/api/v1/auth/login", json={})
@@ -9,20 +6,18 @@ def test_login_missing_credentials(client):
 
 def test_login_invalid_email_format(client):
     """Test login fails with invalid email format."""
-    response = client.post("/api/v1/auth/login", json={
-        "email": "invalid-email",
-        "password": "password123"
-    })
+    response = client.post(
+        "/api/v1/auth/login", json={"email": "invalid-email", "password": "password123"}
+    )
     # Either 422 or 401
     assert response.status_code in [422, 401]
 
 
 def test_login_empty_password(client):
     """Test login fails with empty password."""
-    response = client.post("/api/v1/auth/login", json={
-        "email": "test@example.com",
-        "password": ""
-    })
+    response = client.post(
+        "/api/v1/auth/login", json={"email": "test@example.com", "password": ""}
+    )
     assert response.status_code in [422, 401]
 
 
@@ -37,17 +32,18 @@ def test_register_success_response_structure(client, mock_user_data):
 
 def test_register_missing_required_fields(client):
     """Test registration fails with missing required fields."""
-    response = client.post("/api/v1/auth/register", json={
-        "email": "test@example.com"
-    })
+    response = client.post("/api/v1/auth/register", json={"email": "test@example.com"})
     assert response.status_code == 422
 
 
 def test_register_invalid_email(client):
     """Test registration fails with invalid email."""
-    response = client.post("/api/v1/auth/register", json={
-        "email": "invalid",
-        "password": "TestPassword123!",
-        "full_name": "Test User"
-    })
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "invalid",
+            "password": "TestPassword123!",
+            "full_name": "Test User",
+        },
+    )
     assert response.status_code == 422

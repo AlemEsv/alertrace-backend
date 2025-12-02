@@ -1,6 +1,5 @@
 import os
 import pytest
-import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -23,9 +22,10 @@ def test_db_engine():
     engine = create_engine(
         os.environ["DATABASE_URL"],
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool
+        poolclass=StaticPool,
     )
     from database.models.database import Base
+
     Base.metadata.create_all(bind=engine)
     yield engine
     # Cleanup
@@ -33,15 +33,17 @@ def test_db_engine():
     if os.path.exists(TEST_DB_FILE):
         os.remove(TEST_DB_FILE)
 
+
 @pytest.fixture(scope="session")
 def async_test_db_engine():
     # Async engine
     engine = create_async_engine(
         os.environ["ASYNC_DATABASE_URL"],
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool
+        poolclass=StaticPool,
     )
     return engine
+
 
 @pytest.fixture
 def client(test_db_engine, async_test_db_engine):
@@ -50,16 +52,12 @@ def client(test_db_engine, async_test_db_engine):
 
     # Sync session maker
     TestingSessionLocal = sessionmaker(
-        autocommit=False,
-        autoflush=False,
-        bind=test_db_engine
+        autocommit=False, autoflush=False, bind=test_db_engine
     )
 
     # Async session maker
     AsyncTestingSessionLocal = sessionmaker(
-        async_test_db_engine, 
-        class_=AsyncSession, 
-        expire_on_commit=False
+        async_test_db_engine, class_=AsyncSession, expire_on_commit=False
     )
 
     # Override async get_db
@@ -77,23 +75,25 @@ def client(test_db_engine, async_test_db_engine):
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_sync_db] = override_get_sync_db
-    
+
     # Mock MQTT to avoid connection attempts and event loop issues
     from unittest.mock import MagicMock, AsyncMock
     from api.services.mqtt.service import mqtt
+
     mqtt.client = MagicMock()
     mqtt.mqtt_startup = AsyncMock()
     mqtt.mqtt_shutdown = AsyncMock()
-    
+
     with TestClient(app) as c:
         yield c
-    
+
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
 def test_db_session(test_db_engine):
     from sqlalchemy.orm import Session
+
     session = Session(bind=test_db_engine)
     yield session
     session.close()
@@ -103,7 +103,7 @@ def test_db_session(test_db_engine):
 def auth_headers():
     return {
         "Authorization": "Bearer test_token_12345",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
 
@@ -113,7 +113,7 @@ def mock_user_data():
         "email": "test@example.com",
         "password": "TestPassword123!",
         "full_name": "Test User",
-        "role": "farmer"
+        "role": "farmer",
     }
 
 
@@ -123,7 +123,7 @@ def mock_farm_data():
         "name": "Test Farm",
         "location": "Test Location",
         "hectares": 100.5,
-        "description": "A test farm"
+        "description": "A test farm",
     }
 
 
@@ -134,5 +134,5 @@ def mock_sensor_data():
         "sensor_type": "temperature",
         "location": "Field A",
         "farm_id": 1,
-        "status": "active"
+        "status": "active",
     }

@@ -5,6 +5,7 @@ import logging
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
 @router.websocket("/sensores/live")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -17,11 +18,11 @@ async def websocket_endpoint(websocket: WebSocket):
             # Mantiene la conexión viva esperando mensajes.
             # El protocolo WebSocket maneja ping/pong automáticamente.
             # Aquí podríamos procesar mensajes del cliente (ej. suscripciones a tópicos específicos)
-            data = await websocket.receive_text()
-            
+            _ = await websocket.receive_text()
+
             # Por ahora, solo logueamos si el cliente envía algo, pero no es necesario para el flujo actual
             # logger.debug(f"Mensaje recibido del cliente: {data}")
-            
+
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
     except Exception as e:

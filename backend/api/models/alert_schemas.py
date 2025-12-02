@@ -2,10 +2,12 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from datetime import datetime
 
+
 class AlertaResponse(BaseModel):
     """Modelo para respuesta de alerta"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id_alerta: int
     id_sensor: int
     tipo_alerta: str
@@ -17,8 +19,10 @@ class AlertaResponse(BaseModel):
     resuelta: bool
     fecha_creacion: datetime
 
+
 class AlertaCreate(BaseModel):
     """Modelo para crear una nueva alerta"""
+
     id_sensor: int
     tipo: str  # temperatura, humedad, ph, etc.
     mensaje: str
@@ -26,8 +30,10 @@ class AlertaCreate(BaseModel):
     valor_medido: Optional[float] = None
     umbral_configurado: Optional[float] = None
 
+
 class ConfiguracionUmbralCreate(BaseModel):
     """Modelo para crear configuración de umbrales"""
+
     id_cultivo: int
     temp_min: Optional[float] = 10.0  # °C
     temp_max: Optional[float] = 35.0  # °C
@@ -40,10 +46,12 @@ class ConfiguracionUmbralCreate(BaseModel):
     radiacion_min: Optional[float] = 200.0  # W/m²
     radiacion_max: Optional[float] = 1000.0  # W/m²
 
+
 class ConfiguracionUmbralResponse(BaseModel):
     """Modelo para respuesta de configuración de umbrales"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id_configuracion: int
     id_cultivo: int
     temp_min: float  # °C

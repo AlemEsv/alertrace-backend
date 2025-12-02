@@ -4,27 +4,34 @@ from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
 
+
 class LotState(str, Enum):
     EN_FINCA = "EnFinca"
     EN_PROCESO = "EnProceso"
     DISTRIBUIDO = "Distribuido"
 
+
 class BlockchainRole(str, Enum):
     """Roles en blockchain"""
+
     PRODUCTOR = "Productor"
     PROCESADOR = "Procesador"
     DISTRIBUIDOR = "Distribuidor"
 
+
 class CertificationType(str, Enum):
     """Tipos de certificación"""
+
     ORGANIC = "Organic"
     FAIR_TRADE = "FairTrade"
     RAINFOREST_ALLIANCE = "RainforestAlliance"
     GLOBAL_GAP = "GlobalGAP"
     UTZ = "UTZ"
 
+
 class FarmCreate(BaseModel):
     """Creación de finca"""
+
     name: str
     location: str
     geohash: Optional[str] = None
@@ -32,8 +39,10 @@ class FarmCreate(BaseModel):
     longitude: Optional[Decimal] = None
     area_hectares: Optional[Decimal] = None
 
+
 class FarmUpdate(BaseModel):
     """Actualización de finca"""
+
     name: Optional[str] = None
     location: Optional[str] = None
     geohash: Optional[str] = None
@@ -41,10 +50,12 @@ class FarmUpdate(BaseModel):
     longitude: Optional[Decimal] = None
     area_hectares: Optional[Decimal] = None
 
+
 class FarmResponse(BaseModel):
     """Respuesta de finca"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id_farm: int
     id_empresa: int
     name: str
@@ -56,8 +67,10 @@ class FarmResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
 class FarmCertificationCreate(BaseModel):
     """Creación de certificación"""
+
     id_farm: int
     certification_type: str
     certifier_name: str
@@ -67,10 +80,12 @@ class FarmCertificationCreate(BaseModel):
     document_url: Optional[str] = None
     document_hash: Optional[str] = None
 
+
 class FarmCertificationResponse(BaseModel):
     """Respuesta de certificación"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     id_farm: int
     certification_type: str
@@ -84,8 +99,10 @@ class FarmCertificationResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
 class LotCreate(BaseModel):
     """Creación de lote"""
+
     lot_id: int
     id_farm: Optional[int] = None
     product_name: str
@@ -95,10 +112,12 @@ class LotCreate(BaseModel):
     harvest_date: Optional[date] = None
     current_owner: str
 
+
 class LotResponse(BaseModel):
     """Respuesta de lote"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     lot_id: int
     id_empresa: int
     id_farm: Optional[int]
@@ -114,8 +133,10 @@ class LotResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
 class HarvestEventCreate(BaseModel):
     """Creación de evento de cosecha"""
+
     lot_id: int
     actor_address: str
     actor_name: Optional[str] = None
@@ -127,10 +148,12 @@ class HarvestEventCreate(BaseModel):
     notes: Optional[str] = None
     event_time: datetime
 
+
 class HarvestEventResponse(BaseModel):
     """Respuesta de evento de cosecha"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     lot_id: int
     actor_address: str
@@ -146,8 +169,10 @@ class HarvestEventResponse(BaseModel):
     event_time: datetime
     created_at: datetime
 
+
 class ProcessingEventCreate(BaseModel):
     """Creación de evento de procesamiento"""
+
     lot_id: int
     actor_address: str
     actor_name: Optional[str] = None
@@ -165,10 +190,12 @@ class ProcessingEventCreate(BaseModel):
     notes: Optional[str] = None
     event_time: datetime
 
+
 class ProcessingEventResponse(BaseModel):
     """Respuesta de evento de procesamiento"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     lot_id: int
     actor_address: str
@@ -190,8 +217,10 @@ class ProcessingEventResponse(BaseModel):
     event_time: datetime
     created_at: datetime
 
+
 class TransferEventCreate(BaseModel):
     """Creación de evento de transferencia"""
+
     lot_id: int
     from_address: str
     from_name: Optional[str] = None
@@ -209,10 +238,12 @@ class TransferEventCreate(BaseModel):
     notes: Optional[str] = None
     event_time: datetime
 
+
 class TransferEventResponse(BaseModel):
     """Respuesta de evento de transferencia"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     lot_id: int
     from_address: str
@@ -234,10 +265,12 @@ class TransferEventResponse(BaseModel):
     event_time: datetime
     created_at: datetime
 
+
 class BlockchainSyncResponse(BaseModel):
     """Respuesta de sincronización blockchain"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     tx_hash: str
     block_number: int

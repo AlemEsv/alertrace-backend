@@ -1,6 +1,3 @@
-import pytest
-
-
 class TestHealthEndpoints:
     """Test health and status endpoints."""
 
@@ -61,7 +58,9 @@ class TestSensorEndpoints:
 
     def test_sensors_create_endpoint(self, client, auth_headers, mock_sensor_data):
         """Test creating a sensor."""
-        response = client.post("/api/v1/sensores/", json=mock_sensor_data, headers=auth_headers)
+        response = client.post(
+            "/api/v1/sensores/", json=mock_sensor_data, headers=auth_headers
+        )
         # Accept 201 (created), 401 (auth required), or 422 (validation error)
         assert response.status_code in [201, 401, 422, 400]
 
