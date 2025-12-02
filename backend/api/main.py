@@ -2,14 +2,13 @@ from fastapi import FastAPI, Response, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 import time
 import os
-from api.worker import init_worker
+from contextlib import asynccontextmanager
 from api.monitoring import setup_logging, PrometheusMiddleware, HealthMonitor, setup_sentry
 from prometheus_client import generate_latest
 
 # Importar los routers modulares
 from api.routes import auth, health
 from api.routes.sensores import router as sensores_router
-from api.routes.cultivos import router as cultivos_router
 from api.routes.dashboard import router as dashboard_router
 from api.routes.alertas import router as alertas_router
 from api.routes.farms import router as farms_router
@@ -17,18 +16,30 @@ from api.routes.lots import router as lots_router
 from api.routes.blockchain import router as blockchain_router
 from api.routes.trabajadores import router as trabajadores_router
 from api.routes.asignaciones import router as asignaciones_router
-from api.routes.tuya_sync import router as tuya_sync_router
+from api.routes.realtime import router as realtime_router
+from api.services.mqtt.service import mqtt
+
+# Configurar monitoreo
+logger = setup_logging()
+setup_sentry()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan events"""
+    logger.info("Alertrace API v1.1.0 started successfully")
+    yield
 
 app = FastAPI(
     title="Alertrace API",
     description="Sistema de monitoreo IoT agrícola",
     version="1.1.0",
-    redirect_slashes=False
+    redirect_slashes=False,
+    lifespan=lifespan
 )
 
-# Configurar monitoreo
-logger = setup_logging()
-setup_sentry()
+# Inicializar MQTT
+mqtt.init_app(app)
+
 app.add_middleware(PrometheusMiddleware)
 
 # Configuración CORS
@@ -69,15 +80,14 @@ api_v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 api_v1_router.include_router(trabajadores_router, prefix="/trabajadores", tags=["Trabajadores"])
 api_v1_router.include_router(asignaciones_router, prefix="/asignaciones", tags=["Asignaciones"])
 api_v1_router.include_router(sensores_router, prefix="/sensores", tags=["Sensores"])
-api_v1_router.include_router(cultivos_router, prefix="/cultivos", tags=["Cultivos"])
 api_v1_router.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
 api_v1_router.include_router(alertas_router, prefix="/alertas", tags=["Alertas"])
 api_v1_router.include_router(farms_router, prefix="/farms", tags=["Farms"])
 api_v1_router.include_router(lots_router, prefix="/lots", tags=["Lots"])
 api_v1_router.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain"])
-api_v1_router.include_router(tuya_sync_router, prefix="/tuya", tags=["Tuya Sync"])
 
 app.include_router(api_v1_router)
+app.include_router(realtime_router, tags=["Realtime"])
 
 # Health y métricas
 app.include_router(health.router, tags=["Health"])
@@ -98,15 +108,6 @@ def root():
     }
 
 
-@app.get("/health", tags=["Monitoreo"])
-async def health_check():
-    """Endpoint de health check con información del sistema"""
-    return HealthMonitor.get_health_check(
-        version="1.1.0",
-        db_session=None
-    )
-
-
 @app.get("/metrics", tags=["Monitoreo"])
 async def metrics():
     """Endpoint de Prometheus metrics para monitoreo"""
@@ -114,13 +115,6 @@ async def metrics():
         content=generate_latest(),
         media_type="text/plain; charset=utf-8"
     )
-
-# Iniciar el worker
-@app.on_event("startup")
-def startup_event():
-    """Evento que se ejecuta al iniciar la aplicación"""
-    # init_worker()
-    logger.info("Alertrace API v1.1.0 started successfully")
 
 
 if __name__ == "__main__":

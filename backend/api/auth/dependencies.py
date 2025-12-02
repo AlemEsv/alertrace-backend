@@ -1,17 +1,20 @@
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import Optional, Union
 from api.auth.jwt_service import jwt_service
 from database.connection import get_db
 from database.models.database import Trabajador, Empresa
+from uuid import UUID
 
 # Esquema de seguridad para tokens (Bearer)
 security = HTTPBearer()
 
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> Union[Trabajador, Empresa]:
     """Extraer y validar usuario actual desde token JWT"""
     token = credentials.credentials
@@ -36,7 +39,7 @@ def get_current_user(
         )
     
     # Buscar el trabajador
-    from uuid import UUID
+    
     try:
         user_uuid = UUID(supabase_user_id)
     except (ValueError, AttributeError):
@@ -46,7 +49,8 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    trabajador = db.query(Trabajador).filter(Trabajador.user_id == user_uuid).first()
+    result = await db.execute(select(Trabajador).where(Trabajador.user_id == user_uuid))
+    trabajador = result.scalars().first()
     
     if not trabajador:
         raise HTTPException(
@@ -65,12 +69,12 @@ def get_current_user(
     return trabajador
 
 
-def get_current_trabajador(
+async def get_current_trabajador(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> Trabajador:
     """Dependency que solo acepta trabajadores"""
-    user = get_current_user(credentials, db)
+    user = await get_current_user(credentials, db)
     
     if not isinstance(user, Trabajador):
         raise HTTPException(
@@ -81,20 +85,30 @@ def get_current_trabajador(
     return user
 
 
-def get_current_empresa(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+async def get_current_empresa(
+    current_user: Trabajador = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ) -> Empresa:
-    """Dependency que solo acepta empresas"""
-    user = get_current_user(credentials, db)
+    """Dependency que obtiene la empresa del usuario actual"""
     
-    if not isinstance(user, Empresa):
+    # Verificar que el usuario tiene una empresa asignada
+    if not current_user.id_empresa:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acceso solo para empresas"
+            detail="Usuario no asociado a ninguna empresa"
+        )
+
+    # Obtener la empresa
+    result = await db.execute(select(Empresa).where(Empresa.id_empresa == current_user.id_empresa))
+    empresa = result.scalars().first()
+    
+    if not empresa:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Empresa no encontrada"
         )
     
-    return user
+    return empresa
 
 def require_admin(current_user: Trabajador = Depends(get_current_user)) -> Trabajador:
     """Validar que el usuario actual tiene rol de administrador"""

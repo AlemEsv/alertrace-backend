@@ -1,12 +1,38 @@
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Float, Text, DECIMAL, ForeignKey, UniqueConstraint, BIGINT, Date, UUID
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.sql import func
 from api.config import settings
 import datetime
 import uuid
 
-engine = create_engine(settings.database_url)
+# Async Engine
+print(f"Creating Async Engine with URL: {settings.async_database_url}")
+async_engine = create_async_engine(
+    settings.async_database_url, 
+    echo=False,
+    connect_args={
+        "statement_cache_size": 0,
+        "command_timeout": 60,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid.uuid4().hex}__"
+    },
+    poolclass=QueuePool,
+    pool_size=20,
+    max_overflow=10
+)
+AsyncSessionLocal = sessionmaker(
+    async_engine, class_=AsyncSession, expire_on_commit=False
+)
+
+# Sync Engine (para ejecución en threadpool con psycopg2)
+print(f"Creating Sync Engine with URL: {settings.database_url}")
+engine = create_engine(
+    settings.database_url,
+    echo=False,
+    poolclass=NullPool # Necesario también para psycopg2 con Transaction Pooler
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
@@ -111,7 +137,9 @@ class LecturaSensor(Base):
     # Mediciones del sensor (mapeo a columnas de base de datos)
     temperatura = Column(DECIMAL(5, 2))
     humedad_aire = Column("humedad", DECIMAL(5, 2))  # Columna 'humedad' mapeada a atributo 'humedad_aire'
-    ph = Column(DECIMAL(4, 2))
+    humedad_suelo = Column(DECIMAL(5, 2))
+    ph_suelo = Column("ph", DECIMAL(4, 2)) # Columna 'ph' mapeada a atributo 'ph_suelo'
+    radiacion_solar = Column(DECIMAL(8, 2))
     conductividad = Column(DECIMAL(10, 2))
     nitrogeno = Column(DECIMAL(10, 2))
     fosforo = Column(DECIMAL(10, 2))
@@ -167,18 +195,18 @@ class Farm(Base):
     """Modelo de fincas con datos geoespaciales"""
     __tablename__ = "farms"
     
-    id = Column(BIGINT, primary_key=True, index=True)
+    id_farm = Column(Integer, primary_key=True, index=True)  # Changed from id to id_farm, BIGINT to Integer (SERIAL is int)
     id_empresa = Column(Integer, ForeignKey("empresas.id_empresa", ondelete="CASCADE"), nullable=False, index=True)
-    farm_name = Column(String(200), nullable=False)
-    farm_code = Column(String(50), unique=True, nullable=True, index=True)
-    location_address = Column(Text, nullable=True)
-    location_geohash = Column(String(12), nullable=True, index=True)
+    name = Column(String(255), nullable=False) # Changed from farm_name
+    # farm_code missing in DB
+    location = Column(Text, nullable=False) # Changed from location_address
+    geohash = Column(String(12), nullable=True) # Changed from location_geohash
     latitude = Column(DECIMAL(10, 8), nullable=True)
     longitude = Column(DECIMAL(11, 8), nullable=True)
     area_hectares = Column(DECIMAL(10, 2), nullable=True)
-    altitude_meters = Column(Integer, nullable=True)
-    description = Column(Text, nullable=True)
-    active = Column(Boolean, default=True, index=True)
+    # altitude_meters missing
+    # description missing
+    # active missing
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -192,7 +220,7 @@ class FarmCertification(Base):
     __tablename__ = "farm_certifications"
     
     id = Column(BIGINT, primary_key=True, index=True)
-    id_farm = Column(BIGINT, ForeignKey("farms.id", ondelete="CASCADE"), nullable=False, index=True)
+    id_farm = Column(BIGINT, ForeignKey("farms.id_farm", ondelete="CASCADE"), nullable=False, index=True)
     certification_type = Column(String(50), nullable=False, index=True)
     certifier_name = Column(String(200), nullable=False)
     certification_number = Column(String(100), nullable=True)
@@ -213,7 +241,7 @@ class Lot(Base):
     
     lot_id = Column(BIGINT, primary_key=True)
     id_empresa = Column(Integer, ForeignKey("empresas.id_empresa", ondelete="CASCADE"), nullable=False, index=True)
-    id_farm = Column(BIGINT, ForeignKey("farms.id", ondelete="SET NULL"), nullable=True, index=True)
+    id_farm = Column(BIGINT, ForeignKey("farms.id_farm", ondelete="SET NULL"), nullable=True, index=True)
     product_name = Column(String(100), nullable=False)
     product_variety = Column(String(100), nullable=True)
     quantity = Column(DECIMAL(12, 2), nullable=False)
