@@ -3,6 +3,7 @@ FROM python:3.11-slim as builder
 WORKDIR /build
 
 # Instalar dependencias del sistema
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     postgresql-client \
@@ -21,6 +22,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Instalar solo cliente PostgreSQL
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
