@@ -1,18 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from supabase import create_client, Client
 from pydantic import BaseModel, EmailStr, field_validator, ValidationError, model_validator
-from typing import Optional
+from typing import Optional, Annotated
 
 from database.connection import get_db
 from database.models.database import Trabajador, Empresa
-from api.models.schemas import UserCreate, Token, UserProfile, EmpresaCreate
+from api.models import UserCreate, Token, UserProfile, EmpresaCreate, RegisterRequest
 from api.auth.dependencies import get_current_user
 from ..config import settings
 import logging
 import uuid
 import json
+
+# Type aliases
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+AuthCreds = Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())]
 
 # Modelo para login con JSON
 class LoginRequest(BaseModel):
@@ -63,27 +69,71 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
+async def register_user(request: RegisterRequest, db: DbSession):
     """
     Registra un nuevo usuario y su empresa asociada.
     Este endpoint realiza una transacción para asegurar la consistencia de los datos.
     """
+    logger.info(f"Register request received for: {request.email}")
+    
+    # Mapear RegisterRequest a los datos necesarios
+    if request.user_type == 'empresa':
+        if not request.nombre_empresa or not request.ruc:
+            raise HTTPException(status_code=400, detail="Nombre de empresa y RUC son requeridos para cuentas de empresa")
+        
+        # Para empresa, usamos datos genéricos o derivados para el administrador
+        nombre = "Admin"
+        apellido = request.nombre_empresa
+        # Generar un DNI temporal o usar parte del RUC si es posible, o un valor aleatorio seguro
+        # Aquí usaremos los últimos 8 dígitos del RUC si es posible, o un valor dummy
+        dni = request.ruc[-8:] if request.ruc and len(request.ruc) >= 8 else "00000000"
+        
+        empresa_data = {
+            "ruc": request.ruc,
+            "razon_social": request.nombre_empresa,
+            "email": request.email # El email de la empresa es el del usuario admin inicial
+        }
+    else:
+        # Lógica para agricultor (si se implementa registro directo de agricultor con empresa nueva?)
+        if not request.nombres or not request.apellidos or not request.dni:
+             raise HTTPException(status_code=400, detail="Nombres, apellidos y DNI son requeridos")
+        
+        nombre = request.nombres
+        apellido = request.apellidos
+        dni = request.dni
+        
+        # Si es agricultor independiente.
+        # Usaremos su nombre como razón social y DNI como RUC
+        empresa_data = {
+            "ruc": request.dni, # Fallback
+            "razon_social": f"{request.nombres} {request.apellidos}",
+            "email": request.email
+        }
+
     try:
         # Iniciar transacción
-        with db.begin_nested():
+        logger.info("Starting DB transaction...")
+        async with db.begin():
+            logger.info("DB transaction started.")
             # Crear usuario en Supabase Auth usando Admin API
             supabase_admin = get_admin_client()
+            logger.info("Calling Supabase create_user...")
+            
+            # Verificar si el usuario ya existe en Supabase para evitar error 500
+            # (Opcional, pero create_user lanzará error si existe)
+            
             auth_response = supabase_admin.auth.admin.create_user({
-                "email": user_data.email,
-                "password": user_data.password,
+                "email": request.email,
+                "password": request.password,
                 "email_confirm": True,  # Auto-confirmar email
                 "user_metadata": {
-                    "nombre": user_data.nombre,
-                    "apellido": user_data.apellido,
+                    "nombre": nombre,
+                    "apellido": apellido,
                     "rol": "admin_empresa",
-                    "ruc_empresa": user_data.empresa.ruc
+                    "ruc_empresa": empresa_data["ruc"]
                 }
             })
+            logger.info("Supabase create_user finished.")
             
             supabase_user = auth_response.user
             if not supabase_user or not supabase_user.id:
@@ -96,32 +146,44 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
             logger.info(f"Usuario creado en Supabase Auth: {user_id}")
 
             # 2. Crear la empresa en la base de datos
+            # Verificar si la empresa ya existe por RUC
+            result = await db.execute(select(Empresa).where(Empresa.ruc == empresa_data["ruc"]))
+            existing_empresa = result.scalars().first()
+            
+            if existing_empresa:
+                # Si la empresa existe, ¿asociamos el usuario a ella?
+                # Por ahora, asumimos que el registro crea una NUEVA empresa.
+                # Si ya existe, podría ser un error o unirse a ella.
+                # Lanzamos error para evitar duplicados o inconsistencias por ahora.
+                raise HTTPException(status_code=400, detail="Una empresa con este RUC ya está registrada.")
+
             nueva_empresa = Empresa(
-                ruc=user_data.empresa.ruc,
-                razon_social=user_data.empresa.razon_social,
-                email=user_data.empresa.email
+                ruc=empresa_data["ruc"],
+                razon_social=empresa_data["razon_social"],
+                email=empresa_data["email"]
             )
             db.add(nueva_empresa)
-            db.flush() # Para obtener el id_empresa generado
+            await db.flush() # Para obtener el id_empresa generado
 
             # 3. Crear el perfil del trabajador (administrador de la empresa)
             nuevo_trabajador = Trabajador(
                 id_empresa=nueva_empresa.id_empresa,
-                nombre=user_data.nombre,
-                apellido=user_data.apellido,
-                dni=user_data.dni,
-                email=user_data.email,
+                nombre=nombre,
+                apellido=apellido,
+                dni=dni,
+                email=request.email,
                 rol='admin_empresa',  # Rol por defecto para el primer usuario de una empresa
-                user_id=user_id  # Vinculación con Supabase Auth
+                user_id=uuid.UUID(str(user_id)),  # Vinculación con Supabase Auth
+                telefono=request.telefono
             )
             db.add(nuevo_trabajador)
-            logger.info(f"Trabajador admin creado: {user_data.email}, empresa: {nueva_empresa.id_empresa}")
+            logger.info(f"Trabajador admin creado: {request.email}, empresa: {nueva_empresa.id_empresa}")
         
-        db.commit()
+        await db.commit()
         return {
             "message": "Usuario y empresa registrados exitosamente.",
             "user_id": str(user_id),
-            "email": user_data.email,
+            "email": request.email,
             "empresa_id": nueva_empresa.id_empresa
         }
 
@@ -189,42 +251,10 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 
 @router.post("/login", response_model=Token)
-async def login(request: Request, db: Session = Depends(get_db)):
-
+async def login(credentials: LoginRequest, db: DbSession):
+    logging.info(f"Attempting login for: {credentials.email}")
+    
     try:
-        # Leer el cuerpo de la solicitud para debugging
-        body = await request.body()
-        logging.info(f"📨 Login request body: {body.decode('utf-8')}")
-        
-        # Parsear y validar los datos
-        try:
-            body_json = await request.json()
-            logging.info(f"Parsed JSON: {body_json}")
-            credentials = LoginRequest(**body_json)
-        except ValidationError as ve:
-            logging.error(f"Validation error: {ve.errors()}")
-            error_details = []
-            for error in ve.errors():
-                field = error.get('loc', ['unknown'])[0]
-                msg = error.get('msg', 'Invalid value')
-                error_details.append(f"{field}: {msg}")
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "message": "Datos de login inválidos",
-                    "errors": error_details,
-                    "hint": "Asegúrate de enviar 'email' (formato válido) y 'password'"
-                }
-            )
-        except json.JSONDecodeError:
-            logging.error("JSON decode error")
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="El cuerpo de la solicitud debe ser JSON válido"
-            )
-        
-        logging.info(f"Attempting login for: {credentials.email}")
-        
         auth_response = supabase.auth.sign_in_with_password({
             "email": credentials.email,
             "password": credentials.password
@@ -239,10 +269,11 @@ async def login(request: Request, db: Session = Depends(get_db)):
             )
         
         supabase_user = session.user
-        user_id = supabase_user.id if supabase_user else None
+        user_id = uuid.UUID(str(supabase_user.id)) if supabase_user and supabase_user.id else None
         
         # Verificar que el trabajador exista en la base de datos
-        trabajador_existente = db.query(Trabajador).filter(Trabajador.user_id == user_id).first()
+        result = await db.execute(select(Trabajador).where(Trabajador.user_id == user_id))
+        trabajador_existente = result.scalars().first()
         
         if not trabajador_existente:
             # Si el usuario se autenticó en Supabase pero no tiene perfil de trabajador
@@ -303,8 +334,8 @@ async def debug_login(request: Request):
 
 @router.get("/me", response_model=UserProfile)
 async def read_users_me(
-    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
-    db: Session = Depends(get_db)
+    credentials: AuthCreds,
+    db: DbSession
 ):
     """
     Obtiene el perfil completo del usuario actualmente autenticado, incluyendo
@@ -341,7 +372,8 @@ async def read_users_me(
             user_id_uuid = user_id
         
         logging.info(f"Querying trabajador with user_id: {user_id_uuid}")
-        perfil_trabajador = db.query(Trabajador).filter(Trabajador.user_id == user_id_uuid).first()
+        result = await db.execute(select(Trabajador).where(Trabajador.user_id == user_id_uuid))
+        perfil_trabajador = result.scalars().first()
         logging.info(f"Trabajador found: {perfil_trabajador is not None}")
 
         if not perfil_trabajador:
@@ -351,7 +383,8 @@ async def read_users_me(
             )
 
         # Busca la empresa asociada para obtener su nombre
-        empresa_asociada = db.query(Empresa).filter(Empresa.id_empresa == perfil_trabajador.id_empresa).first()
+        result_empresa = await db.execute(select(Empresa).where(Empresa.id_empresa == perfil_trabajador.id_empresa))
+        empresa_asociada = result_empresa.scalars().first()
 
         user_type = "empresa" if perfil_trabajador.rol == "admin_empresa" else "trabajador"
         

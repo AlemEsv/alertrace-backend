@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from sqlalchemy import desc
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Annotated
 from database.connection import get_db
 from database.models.database import (
-    Lot, Farm, HarvestEvent, ProcessingEvent, TransferEvent
+    Lot, Farm, HarvestEvent, ProcessingEvent, TransferEvent, Empresa
 )
-from api.models.schemas import (
+from api.models import (
     LotCreate, LotResponse,
     HarvestEventCreate, HarvestEventResponse,
     ProcessingEventCreate, ProcessingEventResponse,
@@ -16,19 +17,22 @@ from api.auth.dependencies import get_current_empresa
 
 router = APIRouter(tags=["Lots"])
 
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 
 @router.post("/", response_model=LotResponse, status_code=status.HTTP_201_CREATED)
-def create_lot(
+async def create_lot(
     lot_data: LotCreate,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Crear nuevo lote de productos"""
     if lot_data.id_farm:
-        farm = db.query(Farm).filter(
+        result_farm = await db.execute(select(Farm).where(
             Farm.id == lot_data.id_farm,
             Farm.id_empresa == empresa.id_empresa
-        ).first()
+        ))
+        farm = result_farm.scalars().first()
         
         if not farm:
             raise HTTPException(
@@ -36,7 +40,8 @@ def create_lot(
                 detail="Finca no encontrada"
             )
     
-    existing_lot = db.query(Lot).filter(Lot.lot_id == lot_data.lot_id).first()
+    result_lot = await db.execute(select(Lot).where(Lot.lot_id == lot_data.lot_id))
+    existing_lot = result_lot.scalars().first()
     if existing_lot:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -48,44 +53,46 @@ def create_lot(
         **lot_data.model_dump()
     )
     db.add(lot)
-    db.commit()
-    db.refresh(lot)
+    await db.commit()
+    await db.refresh(lot)
     return lot
 
 
 @router.get("/", response_model=List[LotResponse])
-def list_lots(
+async def list_lots(
+    db: DbSession,
+    empresa: Empresa = Depends(get_current_empresa),
     skip: int = 0,
     limit: int = 100,
     state: str = None,
-    farm_id: int = None,
-    db: Session = Depends(get_db),
-    empresa = Depends(get_current_empresa)
+    farm_id: int = None
 ):
     """Listar lotes de la empresa autenticada"""
-    query = db.query(Lot).filter(Lot.id_empresa == empresa.id_empresa)
+    query = select(Lot).where(Lot.id_empresa == empresa.id_empresa)
     
     if state:
-        query = query.filter(Lot.current_state == state)
+        query = query.where(Lot.current_state == state)
     
     if farm_id:
-        query = query.filter(Lot.id_farm == farm_id)
+        query = query.where(Lot.id_farm == farm_id)
     
-    lots = query.order_by(desc(Lot.created_at)).offset(skip).limit(limit).all()
+    result = await db.execute(query.order_by(desc(Lot.created_at)).offset(skip).limit(limit))
+    lots = result.scalars().all()
     return lots
 
 
 @router.get("/{lot_id}", response_model=LotResponse)
-def get_lot(
+async def get_lot(
     lot_id: int,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Obtener detalles de un lote específico"""
-    lot = db.query(Lot).filter(
+    result = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -97,17 +104,18 @@ def get_lot(
 
 
 @router.patch("/{lot_id}", response_model=LotResponse)
-def update_lot(
+async def update_lot(
     lot_id: int,
     lot_data: LotCreate,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Actualizar información de un lote"""
-    lot = db.query(Lot).filter(
+    result = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -119,22 +127,23 @@ def update_lot(
     for field, value in update_data.items():
         setattr(lot, field, value)
     
-    db.commit()
-    db.refresh(lot)
+    await db.commit()
+    await db.refresh(lot)
     return lot
 
 
 @router.get("/{lot_id}/traceability")
-def get_lot_traceability(
+async def get_lot_traceability(
     lot_id: int,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ) -> Dict[str, Any]:
     """Obtener trazabilidad completa de un lote"""
-    lot = db.query(Lot).filter(
+    result_lot = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result_lot.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -142,17 +151,20 @@ def get_lot_traceability(
             detail="Lote no encontrado"
         )
     
-    harvest_events = db.query(HarvestEvent).filter(
+    result_harvest = await db.execute(select(HarvestEvent).where(
         HarvestEvent.lot_id == lot_id
-    ).order_by(HarvestEvent.event_time).all()
+    ).order_by(HarvestEvent.event_time))
+    harvest_events = result_harvest.scalars().all()
     
-    processing_events = db.query(ProcessingEvent).filter(
+    result_processing = await db.execute(select(ProcessingEvent).where(
         ProcessingEvent.lot_id == lot_id
-    ).order_by(ProcessingEvent.event_time).all()
+    ).order_by(ProcessingEvent.event_time))
+    processing_events = result_processing.scalars().all()
     
-    transfer_events = db.query(TransferEvent).filter(
+    result_transfer = await db.execute(select(TransferEvent).where(
         TransferEvent.lot_id == lot_id
-    ).order_by(TransferEvent.event_time).all()
+    ).order_by(TransferEvent.event_time))
+    transfer_events = result_transfer.scalars().all()
     
     return {
         "lot": LotResponse.model_validate(lot),
@@ -164,17 +176,18 @@ def get_lot_traceability(
 
 
 @router.post("/{lot_id}/harvest", response_model=HarvestEventResponse, status_code=status.HTTP_201_CREATED)
-def register_harvest_event(
+async def register_harvest_event(
     lot_id: int,
     event_data: HarvestEventCreate,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Registrar evento de cosecha para un lote"""
-    lot = db.query(Lot).filter(
+    result_lot = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result_lot.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -190,22 +203,23 @@ def register_harvest_event(
     
     harvest_event = HarvestEvent(**event_data.model_dump())
     db.add(harvest_event)
-    db.commit()
-    db.refresh(harvest_event)
+    await db.commit()
+    await db.refresh(harvest_event)
     return harvest_event
 
 
 @router.get("/{lot_id}/harvest", response_model=List[HarvestEventResponse])
-def list_harvest_events(
+async def list_harvest_events(
     lot_id: int,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Listar eventos de cosecha de un lote"""
-    lot = db.query(Lot).filter(
+    result_lot = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result_lot.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -213,25 +227,27 @@ def list_harvest_events(
             detail="Lote no encontrado"
         )
     
-    events = db.query(HarvestEvent).filter(
+    result_events = await db.execute(select(HarvestEvent).where(
         HarvestEvent.lot_id == lot_id
-    ).order_by(HarvestEvent.event_time).all()
+    ).order_by(HarvestEvent.event_time))
+    events = result_events.scalars().all()
     
     return events
 
 
 @router.post("/{lot_id}/processing", response_model=ProcessingEventResponse, status_code=status.HTTP_201_CREATED)
-def register_processing_event(
+async def register_processing_event(
     lot_id: int,
     event_data: ProcessingEventCreate,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Registrar evento de procesamiento para un lote"""
-    lot = db.query(Lot).filter(
+    result_lot = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result_lot.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -247,22 +263,23 @@ def register_processing_event(
     
     processing_event = ProcessingEvent(**event_data.model_dump())
     db.add(processing_event)
-    db.commit()
-    db.refresh(processing_event)
+    await db.commit()
+    await db.refresh(processing_event)
     return processing_event
 
 
 @router.get("/{lot_id}/processing", response_model=List[ProcessingEventResponse])
-def list_processing_events(
+async def list_processing_events(
     lot_id: int,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Listar eventos de procesamiento de un lote"""
-    lot = db.query(Lot).filter(
+    result_lot = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result_lot.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -270,25 +287,27 @@ def list_processing_events(
             detail="Lote no encontrado"
         )
     
-    events = db.query(ProcessingEvent).filter(
+    result_events = await db.execute(select(ProcessingEvent).where(
         ProcessingEvent.lot_id == lot_id
-    ).order_by(ProcessingEvent.event_time).all()
+    ).order_by(ProcessingEvent.event_time))
+    events = result_events.scalars().all()
     
     return events
 
 
 @router.post("/{lot_id}/transfer", response_model=TransferEventResponse, status_code=status.HTTP_201_CREATED)
-def register_transfer_event(
+async def register_transfer_event(
     lot_id: int,
     event_data: TransferEventCreate,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Registrar evento de transferencia para un lote"""
-    lot = db.query(Lot).filter(
+    result_lot = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result_lot.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -308,22 +327,23 @@ def register_transfer_event(
     lot.current_owner = event_data.to_address
     lot.current_state = "Distribuido"
     
-    db.commit()
-    db.refresh(transfer_event)
+    await db.commit()
+    await db.refresh(transfer_event)
     return transfer_event
 
 
 @router.get("/{lot_id}/transfer", response_model=List[TransferEventResponse])
-def list_transfer_events(
+async def list_transfer_events(
     lot_id: int,
-    db: Session = Depends(get_db),
+    db: DbSession,
     empresa = Depends(get_current_empresa)
 ):
     """Listar eventos de transferencia de un lote"""
-    lot = db.query(Lot).filter(
+    result_lot = await db.execute(select(Lot).where(
         Lot.lot_id == lot_id,
         Lot.id_empresa == empresa.id_empresa
-    ).first()
+    ))
+    lot = result_lot.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -331,8 +351,9 @@ def list_transfer_events(
             detail="Lote no encontrado"
         )
     
-    events = db.query(TransferEvent).filter(
+    result_events = await db.execute(select(TransferEvent).where(
         TransferEvent.lot_id == lot_id
-    ).order_by(TransferEvent.event_time).all()
+    ).order_by(TransferEvent.event_time))
+    events = result_events.scalars().all()
     
     return events

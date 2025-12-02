@@ -1,29 +1,31 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import func, text
+from typing import List, Optional, Annotated
 from datetime import datetime
 from database.connection import get_db
-from database.models.database import Trabajador, Empresa, Alerta, Sensor
+from database.models.database import Trabajador, Empresa, Alerta, Sensor, LecturaSensor, ConfiguracionUmbral
 from api.auth.dependencies import get_current_user
 
 router = APIRouter(
     tags=["Alertas"]
 )
 
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 
 @router.get("/")
-def get_alertas(
+async def get_alerts(
+    db: DbSession,
     skip: int = 0,
     limit: int = 100,
     estado: Optional[str] = None,
     severidad: Optional[str] = None,
-    current_user = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user = Depends(get_current_user)
 ):
     """Obtener lista de alertas según el tipo de usuario"""
     try:
-        from sqlalchemy import text
-        
         # Determinar empresa_id según el tipo de usuario
         if isinstance(current_user, Trabajador):
             empresa_id = current_user.id_empresa
@@ -41,7 +43,7 @@ def get_alertas(
         elif estado == "pendiente" or estado is None:
             estado_filter = "AND resuelta = FALSE"
         
-        result = db.execute(text(f"""
+        result = await db.execute(text(f"""
             SELECT id_alerta, id_sensor, tipo_alerta, severidad, titulo, mensaje, 
                    resuelta,
                    fecha_creacion
@@ -86,16 +88,17 @@ def get_alertas(
 
 
 @router.get("/{alerta_id}")
-def get_alerta(
+async def get_alert(
     alerta_id: int,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener una alerta específica"""
-    alerta = db.query(Alerta).filter(
+    result = await db.execute(select(Alerta).where(
         Alerta.id_alerta == alerta_id,
         Alerta.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    alerta = result.scalars().first()
     
     if not alerta:
         raise HTTPException(
@@ -116,15 +119,16 @@ def get_alerta(
 
 
 @router.patch("/{alerta_id}/resolve")
-def resolve_alerta(
+async def resolve_alert(
     alerta_id: int,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
-    alerta = db.query(Alerta).filter(
+    result = await db.execute(select(Alerta).where(
         Alerta.id_alerta == alerta_id,
         Alerta.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    alerta = result.scalars().first()
     
     if not alerta:
         raise HTTPException(
@@ -135,20 +139,22 @@ def resolve_alerta(
     # Marcar la alerta
     alerta.resuelta = True
     alerta.fecha_resolucion = datetime.utcnow()
-    db.commit()
-    from database.models.database import Sensor, LecturaSensor, ConfiguracionUmbral
+    await db.commit()
     
-    sensor = db.query(Sensor).filter(Sensor.id_sensor == alerta.id_sensor).first()
+    result_sensor = await db.execute(select(Sensor).where(Sensor.id_sensor == alerta.id_sensor))
+    sensor = result_sensor.scalars().first()
     if sensor:
         # Obtener la última lectura del sensor
-        ultima_lectura = db.query(LecturaSensor).filter(
+        result_lectura = await db.execute(select(LecturaSensor).where(
             LecturaSensor.id_sensor == sensor.id_sensor
-        ).order_by(LecturaSensor.timestamp.desc()).first()
+        ).order_by(LecturaSensor.timestamp.desc()).limit(1))
+        ultima_lectura = result_lectura.scalars().first()
         
         if ultima_lectura:
-            umbral = db.query(ConfiguracionUmbral).filter(
+            result_umbral = await db.execute(select(ConfiguracionUmbral).where(
                 ConfiguracionUmbral.id_empresa == current_user.id_empresa
-            ).first()
+            ))
+            umbral = result_umbral.scalars().first()
             
             if umbral:
                 problema_persiste = False
@@ -216,7 +222,7 @@ def resolve_alerta(
                         fecha_creacion=datetime.utcnow()
                     )
                     db.add(nueva_alerta)
-                    db.commit()
+                    await db.commit()
                     
                     return {
                         "message": "Alerta marcada como resuelta, pero se detectó que el problema persiste", 
@@ -225,7 +231,7 @@ def resolve_alerta(
                         "problema_persiste": True
                     }
     
-    db.refresh(alerta)
+    await db.refresh(alerta)
     return {
         "message": "Alerta marcada como resuelta correctamente", 
         "alerta_id": alerta_id,
@@ -234,16 +240,17 @@ def resolve_alerta(
 
 
 @router.patch("/{alerta_id}/viewed")
-def mark_alerta_as_viewed(
+async def mark_alert_as_viewed(
     alerta_id: int,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Marcar una alerta como vista"""
-    alerta = db.query(Alerta).filter(
+    result = await db.execute(select(Alerta).where(
         Alerta.id_alerta == alerta_id,
         Alerta.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    alerta = result.scalars().first()
     
     if not alerta:
         raise HTTPException(
@@ -256,14 +263,15 @@ def mark_alerta_as_viewed(
 
 
 @router.get("/count/pendientes")
-def get_alertas_pendientes_count(
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+async def get_pending_alerts_count(
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener el número de alertas pendientes"""
-    count = db.query(Alerta).filter(
+    result = await db.execute(select(func.count()).select_from(Alerta).where(
         Alerta.id_empresa == current_user.id_empresa,
         Alerta.resuelta == False
-    ).count()
+    ))
+    count = result.scalar()
     
     return {"alertas_pendientes": count}

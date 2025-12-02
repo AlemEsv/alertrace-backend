@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, Annotated
 import uuid
 import logging
 
@@ -14,6 +16,9 @@ from api.config import settings
 router = APIRouter(
     tags=["Trabajadores"]
 )
+
+# Type aliases
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 def get_admin_client() -> Client:
     """Obtiene el cliente admin de Supabase con service_role_key"""
@@ -48,10 +53,10 @@ class TrabajadorUpdate(BaseModel):
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def crear_trabajador(
+async def create_worker(
     trabajador_data: TrabajadorCreate,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """
     Crear un nuevo trabajador en la empresa.
@@ -65,9 +70,8 @@ async def crear_trabajador(
         )
     
     # Verificar que el email no esté en uso
-    trabajador_existente = db.query(Trabajador).filter(
-        Trabajador.email == trabajador_data.email
-    ).first()
+    result = await db.execute(select(Trabajador).where(Trabajador.email == trabajador_data.email))
+    trabajador_existente = result.scalars().first()
     
     if trabajador_existente:
         raise HTTPException(
@@ -114,8 +118,8 @@ async def crear_trabajador(
         )
         
         db.add(nuevo_trabajador)
-        db.commit()
-        db.refresh(nuevo_trabajador)
+        await db.commit()
+        await db.refresh(nuevo_trabajador)
         
         return {
             "message": "Trabajador creado exitosamente",
@@ -132,7 +136,7 @@ async def crear_trabajador(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.error(f"Error al crear trabajador: {str(e)}", exc_info=True)
         
         # Mensajes de error más específicos
@@ -149,16 +153,17 @@ async def crear_trabajador(
 
 
 @router.get("/{trabajador_id}")
-async def obtener_trabajador(
+async def get_worker(
     trabajador_id: int,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener información de un trabajador específico"""
-    trabajador = db.query(Trabajador).filter(
+    result = await db.execute(select(Trabajador).where(
         Trabajador.id_trabajador == trabajador_id,
         Trabajador.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    trabajador = result.scalars().first()
     
     if not trabajador:
         raise HTTPException(
@@ -167,10 +172,11 @@ async def obtener_trabajador(
         )
     
     # Obtener sensores asignados
-    asignaciones = db.query(AsignacionSensor).filter(
+    result_asignaciones = await db.execute(select(AsignacionSensor).where(
         AsignacionSensor.id_trabajador == trabajador_id,
         AsignacionSensor.fecha_desasignacion.is_(None)
-    ).all()
+    ))
+    asignaciones = result_asignaciones.scalars().all()
     
     sensores_asignados = [asig.id_sensor for asig in asignaciones]
     
@@ -189,11 +195,11 @@ async def obtener_trabajador(
 
 
 @router.put("/{trabajador_id}")
-async def actualizar_trabajador(
+async def update_worker(
     trabajador_id: int,
     trabajador_data: TrabajadorUpdate,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """
     Actualizar información de un trabajador.
@@ -205,10 +211,11 @@ async def actualizar_trabajador(
             detail="Solo los administradores de empresa pueden editar trabajadores"
         )
     
-    trabajador = db.query(Trabajador).filter(
+    result = await db.execute(select(Trabajador).where(
         Trabajador.id_trabajador == trabajador_id,
         Trabajador.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    trabajador = result.scalars().first()
     
     if not trabajador:
         raise HTTPException(
@@ -231,8 +238,8 @@ async def actualizar_trabajador(
         trabajador.activo = trabajador_data.activo
     
     try:
-        db.commit()
-        db.refresh(trabajador)
+        await db.commit()
+        await db.refresh(trabajador)
         
         return {
             "message": "Trabajador actualizado exitosamente",
@@ -246,7 +253,7 @@ async def actualizar_trabajador(
             }
         }
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al actualizar trabajador: {str(e)}"
@@ -254,10 +261,10 @@ async def actualizar_trabajador(
 
 
 @router.delete("/{trabajador_id}")
-async def desactivar_trabajador(
+async def deactivate_worker(
     trabajador_id: int,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """
     Desactivar un trabajador (soft delete).
@@ -269,10 +276,11 @@ async def desactivar_trabajador(
             detail="Solo los administradores de empresa pueden desactivar trabajadores"
         )
     
-    trabajador = db.query(Trabajador).filter(
+    result = await db.execute(select(Trabajador).where(
         Trabajador.id_trabajador == trabajador_id,
         Trabajador.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    trabajador = result.scalars().first()
     
     if not trabajador:
         raise HTTPException(
@@ -289,14 +297,14 @@ async def desactivar_trabajador(
     
     try:
         trabajador.activo = False
-        db.commit()
+        await db.commit()
         
         return {
             "message": "Trabajador desactivado exitosamente",
             "trabajador_id": trabajador_id
         }
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al desactivar trabajador: {str(e)}"
@@ -304,28 +312,30 @@ async def desactivar_trabajador(
 
 
 @router.get("/")
-async def listar_trabajadores(
+async def list_workers(
+    db: DbSession,
     current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db),
     activos_solo: bool = True
 ):
     """Listar todos los trabajadores de la empresa"""
-    query = db.query(Trabajador).filter(
+    query = select(Trabajador).where(
         Trabajador.id_empresa == current_user.id_empresa
     )
     
     if activos_solo:
-        query = query.filter(Trabajador.activo == True)
+        query = query.where(Trabajador.activo == True)
     
-    trabajadores = query.all()
+    result = await db.execute(query)
+    trabajadores = result.scalars().all()
     
     resultado = []
     for trabajador in trabajadores:
         # Contar sensores asignados
-        sensores_asignados = db.query(AsignacionSensor).filter(
+        result_count = await db.execute(select(func.count()).select_from(AsignacionSensor).where(
             AsignacionSensor.id_trabajador == trabajador.id_trabajador,
             AsignacionSensor.fecha_desasignacion.is_(None)
-        ).count()
+        ))
+        sensores_asignados = result_count.scalar()
         
         resultado.append({
             "id_trabajador": trabajador.id_trabajador,

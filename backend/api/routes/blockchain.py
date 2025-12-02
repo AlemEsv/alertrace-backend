@@ -1,40 +1,48 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from typing import Annotated, List, Dict, Any
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from sqlalchemy import desc, func
-from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from database.connection import get_db
 from database.models.database import BlockchainSync, Lot
-from api.models.schemas import BlockchainSyncResponse
+from api.models import BlockchainSyncResponse
 
 router = APIRouter(tags=["Blockchain"])
 
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 @router.get("/sync/status")
-def get_sync_status(
-    db: Session = Depends(get_db)
+async def get_sync_status(
+    db: DbSession
 ) -> Dict[str, Any]:
     """Obtener estado de sincronización blockchain"""
-    total_events = db.query(func.count(BlockchainSync.id)).scalar()
+    result_total = await db.execute(select(func.count(BlockchainSync.id)))
+    total_events = result_total.scalar()
     
-    processed_events = db.query(func.count(BlockchainSync.id)).filter(
+    result_processed = await db.execute(select(func.count(BlockchainSync.id)).where(
         BlockchainSync.processed == True
-    ).scalar()
+    ))
+    processed_events = result_processed.scalar()
     
-    pending_events = db.query(func.count(BlockchainSync.id)).filter(
+    result_pending = await db.execute(select(func.count(BlockchainSync.id)).where(
         BlockchainSync.processed == False
-    ).scalar()
+    ))
+    pending_events = result_pending.scalar()
     
-    failed_events = db.query(func.count(BlockchainSync.id)).filter(
+    result_failed = await db.execute(select(func.count(BlockchainSync.id)).where(
         BlockchainSync.processed == False,
         BlockchainSync.error_message.isnot(None)
-    ).scalar()
+    ))
+    failed_events = result_failed.scalar()
     
-    last_sync = db.query(BlockchainSync).order_by(
+    result_last_sync = await db.execute(select(BlockchainSync).order_by(
         desc(BlockchainSync.block_timestamp)
-    ).first()
+    ).limit(1))
+    last_sync = result_last_sync.scalars().first()
     
-    last_block = db.query(func.max(BlockchainSync.block_number)).scalar()
+    result_last_block = await db.execute(select(func.max(BlockchainSync.block_number)))
+    last_block = result_last_block.scalar()
     
     return {
         "total_events": total_events or 0,
@@ -48,35 +56,39 @@ def get_sync_status(
 
 
 @router.get("/sync/events", response_model=List[BlockchainSyncResponse])
-def list_sync_events(
+async def list_sync_events(
+    db: DbSession,
     skip: int = 0,
     limit: int = 100,
     processed: bool = None,
-    event_name: str = None,
-    db: Session = Depends(get_db)
+    event_name: str = None
 ):
     """Listar eventos de sincronización blockchain"""
-    query = db.query(BlockchainSync)
+    query = select(BlockchainSync)
     
     if processed is not None:
-        query = query.filter(BlockchainSync.processed == processed)
+        query = query.where(BlockchainSync.processed == processed)
     
     if event_name:
-        query = query.filter(BlockchainSync.event_name == event_name)
+        query = query.where(BlockchainSync.event_name == event_name)
     
-    events = query.order_by(desc(BlockchainSync.block_timestamp)).offset(skip).limit(limit).all()
+    query = query.order_by(desc(BlockchainSync.block_timestamp)).offset(skip).limit(limit)
+    
+    result = await db.execute(query)
+    events = result.scalars().all()
     return events
 
 
 @router.get("/sync/events/{tx_hash}", response_model=BlockchainSyncResponse)
-def get_sync_event(
+async def get_sync_event(
     tx_hash: str,
-    db: Session = Depends(get_db)
+    db: DbSession
 ):
     """Obtener detalles de un evento específico por transaction hash"""
-    event = db.query(BlockchainSync).filter(
+    result = await db.execute(select(BlockchainSync).where(
         BlockchainSync.tx_hash == tx_hash
-    ).first()
+    ))
+    event = result.scalars().first()
     
     if not event:
         raise HTTPException(
@@ -88,14 +100,15 @@ def get_sync_event(
 
 
 @router.post("/sync/retry/{sync_id}")
-def retry_failed_sync(
+async def retry_failed_sync(
     sync_id: int,
-    db: Session = Depends(get_db)
+    db: DbSession
 ) -> Dict[str, Any]:
     """Reintentar procesamiento de evento fallido"""
-    sync_event = db.query(BlockchainSync).filter(
+    result = await db.execute(select(BlockchainSync).where(
         BlockchainSync.id == sync_id
-    ).first()
+    ))
+    sync_event = result.scalars().first()
     
     if not sync_event:
         raise HTTPException(
@@ -112,7 +125,7 @@ def retry_failed_sync(
     sync_event.error_message = None
     sync_event.processed = False
     
-    db.commit()
+    await db.commit()
     
     return {
         "message": "Evento marcado para reintento",
@@ -122,12 +135,13 @@ def retry_failed_sync(
 
 
 @router.get("/lots/{lot_id}/blockchain-history")
-def get_lot_blockchain_history(
+async def get_lot_blockchain_history(
     lot_id: int,
-    db: Session = Depends(get_db)
+    db: DbSession
 ) -> Dict[str, Any]:
     """Obtener historial blockchain de un lote específico"""
-    lot = db.query(Lot).filter(Lot.lot_id == lot_id).first()
+    result_lot = await db.execute(select(Lot).where(Lot.lot_id == lot_id))
+    lot = result_lot.scalars().first()
     
     if not lot:
         raise HTTPException(
@@ -135,9 +149,10 @@ def get_lot_blockchain_history(
             detail="Lote no encontrado"
         )
     
-    blockchain_events = db.query(BlockchainSync).filter(
+    result_events = await db.execute(select(BlockchainSync).where(
         BlockchainSync.lot_id == lot_id
-    ).order_by(BlockchainSync.block_timestamp).all()
+    ).order_by(BlockchainSync.block_timestamp))
+    blockchain_events = result_events.scalars().all()
     
     events_by_type = {}
     for event in blockchain_events:
@@ -162,29 +177,35 @@ def get_lot_blockchain_history(
 
 
 @router.get("/stats/daily")
-def get_daily_stats(
-    days: int = 7,
-    db: Session = Depends(get_db)
+async def get_daily_stats(
+    db: DbSession,
+    days: int = 7
 ) -> Dict[str, Any]:
     """Obtener estadísticas diarias de eventos blockchain"""
     since_date = datetime.utcnow() - timedelta(days=days)
     
-    events = db.query(
+    # Note: func.date might be specific to the database dialect. 
+    # For PostgreSQL, it works. For SQLite, it might need adjustment if used.
+    # Assuming PostgreSQL as per asyncpg usage.
+    query = select(
         func.date(BlockchainSync.block_timestamp).label('date'),
         func.count(BlockchainSync.id).label('count'),
         func.count(func.nullif(BlockchainSync.processed, False)).label('processed_count')
-    ).filter(
+    ).where(
         BlockchainSync.block_timestamp >= since_date
     ).group_by(
         func.date(BlockchainSync.block_timestamp)
     ).order_by(
         func.date(BlockchainSync.block_timestamp)
-    ).all()
+    )
+    
+    result = await db.execute(query)
+    events = result.all()
     
     daily_stats = []
     for event in events:
         daily_stats.append({
-            "date": event.date.isoformat(),
+            "date": event.date.isoformat() if hasattr(event.date, 'isoformat') else str(event.date),
             "total_events": event.count,
             "processed_events": event.processed_count or 0,
             "pending_events": event.count - (event.processed_count or 0)
@@ -197,11 +218,11 @@ def get_daily_stats(
 
 
 @router.get("/contracts/activity")
-def get_contract_activity(
-    db: Session = Depends(get_db)
+async def get_contract_activity(
+    db: DbSession
 ) -> Dict[str, Any]:
     """Obtener actividad por contrato inteligente"""
-    contracts = db.query(
+    query = select(
         BlockchainSync.contract_address,
         func.count(BlockchainSync.id).label('event_count'),
         func.max(BlockchainSync.block_timestamp).label('last_activity')
@@ -209,7 +230,10 @@ def get_contract_activity(
         BlockchainSync.contract_address
     ).order_by(
         desc('event_count')
-    ).all()
+    )
+    
+    result = await db.execute(query)
+    contracts = result.all()
     
     contract_stats = []
     for contract in contracts:

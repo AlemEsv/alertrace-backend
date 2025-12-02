@@ -1,18 +1,22 @@
 from datetime import datetime
+from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import func, text
 from database.connection import get_db
-from database.models.database import Trabajador, Sensor, Alerta
+from database.models.database import Trabajador, Sensor, Alerta, LecturaSensor
 from api.auth.dependencies import get_current_user
 
 router = APIRouter(
     tags=["Dashboard y Estadísticas"]
 )
 
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 
 @router.get("/health")
-def health_check():
+async def health_check():
     """Endpoint de health check para verificar estado del servicio"""
     return {
         "status": "healthy",
@@ -23,26 +27,25 @@ def health_check():
 
 
 @router.get("/")
-async def obtener_dashboard(
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+async def get_dashboard(
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener datos del dashboard del usuario"""
-    from sqlalchemy import text
     
     # Obtener ID de empresa del usuario actual
     id_empresa = current_user.id_empresa
     
     # Usar consultas SQL directas para evitar problemas de ORM
-    result = db.execute(text("SELECT COUNT(*) FROM sensores WHERE id_empresa = :empresa_id"), 
+    result = await db.execute(text("SELECT COUNT(*) FROM sensores WHERE id_empresa = :empresa_id"), 
                         {"empresa_id": id_empresa})
     total_sensores = result.scalar()
     
-    result = db.execute(text("SELECT COUNT(*) FROM sensores WHERE id_empresa = :empresa_id AND activo = true"), 
+    result = await db.execute(text("SELECT COUNT(*) FROM sensores WHERE id_empresa = :empresa_id AND activo = true"), 
                         {"empresa_id": id_empresa})
     sensores_activos = result.scalar()
     
-    result = db.execute(text("SELECT COUNT(*) FROM alertas WHERE id_empresa = :empresa_id AND resuelta = false"), 
+    result = await db.execute(text("SELECT COUNT(*) FROM alertas WHERE id_empresa = :empresa_id AND resuelta = false"), 
                         {"empresa_id": id_empresa})
     alertas_pendientes = result.scalar()
     
@@ -54,9 +57,9 @@ async def obtener_dashboard(
 
 
 @router.get("/sensores")
-async def obtener_dashboard_sensores(
+async def get_dashboard_sensors(
+    db: DbSession,
     current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db),
     horas: int = 24
 ):
     """Obtener dashboard completo de sensores IoT"""
@@ -64,9 +67,9 @@ async def obtener_dashboard_sensores(
 
 
 @router.get("/sensores/estadisticas")
-async def obtener_estadisticas_sensores(
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+async def get_sensor_statistics(
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener estadísticas generales de sensores"""
     return {"message": "Estadísticas de sensores no implementadas aún"}
@@ -74,48 +77,52 @@ async def obtener_estadisticas_sensores(
 
 @router.get("/kpis")
 async def get_dashboard_kpis(
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener KPIs principales del dashboard"""
-    from api.models.schemas import DashboardKPIs
+    from api.models import DashboardKPIs
     from datetime import timedelta
-    from database.models.database import LecturaSensor
     
     # Obtener ID de empresa del usuario actual
     id_empresa = current_user.id_empresa
     
     # Contar sensores activos de la empresa
-    sensores_activos = db.query(Sensor).filter(
+    result_activos = await db.execute(select(func.count()).select_from(Sensor).where(
         Sensor.id_empresa == id_empresa,
         Sensor.estado == 'activo'
-    ).count()
+    ))
+    sensores_activos = result_activos.scalar()
     
     # Contar sensores totales como "cultivos monitoreados"
-    cultivos_monitoreados = db.query(Sensor).filter(
+    result_totales = await db.execute(select(func.count()).select_from(Sensor).where(
         Sensor.id_empresa == id_empresa
-    ).count()
+    ))
+    cultivos_monitoreados = result_totales.scalar()
     
     # Contar alertas pendientes (mediante join con Sensor para filtrar por empresa)
-    alertas_pendientes = db.query(Alerta).join(Sensor).filter(
+    result_alertas = await db.execute(select(func.count()).select_from(Alerta).join(Sensor).where(
         Sensor.id_empresa == id_empresa,
         Alerta.estado == 'pendiente'
-    ).count()
+    ))
+    alertas_pendientes = result_alertas.scalar()
     
     # Calcular promedios de temperatura y humedad (últimas 24 horas)
     fecha_limite = datetime.utcnow() - timedelta(hours=24)
     
-    temp_promedio = db.query(func.avg(LecturaSensor.temperatura)).join(Sensor).filter(
+    result_temp = await db.execute(select(func.avg(LecturaSensor.temperatura)).join(Sensor).where(
         Sensor.id_empresa == id_empresa,
         LecturaSensor.timestamp >= fecha_limite,
         LecturaSensor.temperatura.isnot(None)
-    ).scalar()
+    ))
+    temp_promedio = result_temp.scalar()
     
-    humedad_promedio = db.query(func.avg(LecturaSensor.humedad_aire)).join(Sensor).filter(
+    result_humedad = await db.execute(select(func.avg(LecturaSensor.humedad_aire)).join(Sensor).where(
         Sensor.id_empresa == id_empresa,
         LecturaSensor.timestamp >= fecha_limite,
         LecturaSensor.humedad_aire.isnot(None)
-    ).scalar()
+    ))
+    humedad_promedio = result_humedad.scalar()
     
     # Calcular áreas bajo monitoreo (10 hectáreas por sensor como aproximación)
     areas_monitoreadas = cultivos_monitoreados * 10.0
@@ -138,16 +145,17 @@ async def get_dashboard_kpis(
 @router.get("/sensor-data/{sensor_id}")
 async def get_sensor_data(
     sensor_id: int,
+    db: DbSession,
     days: int = 7,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener datos históricos de un sensor"""
     # Verificar que el sensor pertenece a la empresa
-    sensor = db.query(Sensor).filter(
+    result = await db.execute(select(Sensor).where(
         Sensor.id_sensor == sensor_id,
         Sensor.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    sensor = result.scalars().first()
     
     if not sensor:
         raise HTTPException(
@@ -164,15 +172,16 @@ async def get_sensor_data(
 
 
 @router.get("/trabajadores")
-async def get_trabajadores(
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+async def get_workers(
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener lista de trabajadores de la empresa del usuario actual"""
     # Obtener todos los trabajadores de la misma empresa
-    trabajadores = db.query(Trabajador).filter(
+    result = await db.execute(select(Trabajador).where(
         Trabajador.id_empresa == current_user.id_empresa
-    ).all()
+    ))
+    trabajadores = result.scalars().all()
     
     # Formatear datos
     trabajadores_data = []
@@ -192,15 +201,19 @@ async def get_trabajadores(
     
     return trabajadores_data
 
+
+
+
 @router.get("/produccion")
-async def get_produccion_data(
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+async def get_production_data(
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """Obtener datos de producción"""
-    sensores = db.query(Sensor).filter(
+    result = await db.execute(select(Sensor).where(
         Sensor.id_empresa == current_user.id_empresa
-    ).all()
+    ))
+    sensores = result.scalars().all()
     
     return {
         "total_hectareas": len(sensores) * 10,  # Mock: 10 hectáreas por sensor

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from pydantic import BaseModel
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Annotated
 
 from database.connection import get_db
 from database.models.database import Trabajador, Sensor, AsignacionSensor
@@ -11,6 +12,8 @@ from api.auth.dependencies import get_current_user
 router = APIRouter(
     tags=["Asignaciones Sensor-Trabajador"]
 )
+
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 # Schemas
@@ -29,10 +32,10 @@ class AsignacionResponse(BaseModel):
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def asignar_sensor(
+async def assign_sensor(
     asignacion_data: AsignacionCreate,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """
     Asignar un sensor a un trabajador.
@@ -45,10 +48,11 @@ async def asignar_sensor(
         )
     
     # Verificar que el sensor existe y pertenece a la empresa
-    sensor = db.query(Sensor).filter(
+    result_sensor = await db.execute(select(Sensor).where(
         Sensor.id_sensor == asignacion_data.id_sensor,
         Sensor.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    sensor = result_sensor.scalars().first()
     
     if not sensor:
         raise HTTPException(
@@ -57,10 +61,11 @@ async def asignar_sensor(
         )
     
     # Verificar que el trabajador existe y pertenece a la empresa
-    trabajador = db.query(Trabajador).filter(
+    result_trabajador = await db.execute(select(Trabajador).where(
         Trabajador.id_trabajador == asignacion_data.id_trabajador,
         Trabajador.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    trabajador = result_trabajador.scalars().first()
     
     if not trabajador:
         raise HTTPException(
@@ -69,11 +74,12 @@ async def asignar_sensor(
         )
     
     # Verificar que no exista ya una asignación activa
-    asignacion_existente = db.query(AsignacionSensor).filter(
+    result_asignacion = await db.execute(select(AsignacionSensor).where(
         AsignacionSensor.id_sensor == asignacion_data.id_sensor,
         AsignacionSensor.id_trabajador == asignacion_data.id_trabajador,
         AsignacionSensor.fecha_desasignacion.is_(None)
-    ).first()
+    ))
+    asignacion_existente = result_asignacion.scalars().first()
     
     if asignacion_existente:
         raise HTTPException(
@@ -90,8 +96,8 @@ async def asignar_sensor(
         )
         
         db.add(nueva_asignacion)
-        db.commit()
-        db.refresh(nueva_asignacion)
+        await db.commit()
+        await db.refresh(nueva_asignacion)
         
         return {
             "message": "Sensor asignado exitosamente",
@@ -106,7 +112,7 @@ async def asignar_sensor(
         }
     
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al crear asignación: {str(e)}"
@@ -114,10 +120,10 @@ async def asignar_sensor(
 
 
 @router.delete("/{asignacion_id}")
-async def desasignar_sensor(
+async def unassign_sensor(
     asignacion_id: int,
-    current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: DbSession,
+    current_user: Trabajador = Depends(get_current_user)
 ):
     """
     Desasignar un sensor de un trabajador.
@@ -129,9 +135,10 @@ async def desasignar_sensor(
         )
     
     # Buscar la asignación
-    asignacion = db.query(AsignacionSensor).filter(
+    result_asignacion = await db.execute(select(AsignacionSensor).where(
         AsignacionSensor.id_asignacion == asignacion_id
-    ).first()
+    ))
+    asignacion = result_asignacion.scalars().first()
     
     if not asignacion:
         raise HTTPException(
@@ -140,10 +147,11 @@ async def desasignar_sensor(
         )
     
     # Verificar que el sensor pertenece a la empresa del usuario
-    sensor = db.query(Sensor).filter(
+    result_sensor = await db.execute(select(Sensor).where(
         Sensor.id_sensor == asignacion.id_sensor,
         Sensor.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    sensor = result_sensor.scalars().first()
     
     if not sensor:
         raise HTTPException(
@@ -161,7 +169,7 @@ async def desasignar_sensor(
     try:
         # Marcar fecha de desasignación
         asignacion.fecha_desasignacion = datetime.utcnow()
-        db.commit()
+        await db.commit()
         
         return {
             "message": "Sensor desasignado exitosamente",
@@ -169,7 +177,7 @@ async def desasignar_sensor(
         }
     
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al desasignar sensor: {str(e)}"
@@ -177,18 +185,19 @@ async def desasignar_sensor(
 
 
 @router.get("/trabajador/{trabajador_id}")
-async def listar_asignaciones_trabajador(
+async def list_worker_assignments(
     trabajador_id: int,
+    db: DbSession,
     current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db),
     activas_solo: bool = True
 ):
     """Listar todas las asignaciones de un trabajador específico"""
     # Verificar que el trabajador pertenece a la empresa
-    trabajador = db.query(Trabajador).filter(
+    result_trabajador = await db.execute(select(Trabajador).where(
         Trabajador.id_trabajador == trabajador_id,
         Trabajador.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    trabajador = result_trabajador.scalars().first()
     
     if not trabajador:
         raise HTTPException(
@@ -197,18 +206,20 @@ async def listar_asignaciones_trabajador(
         )
     
     # Consultar asignaciones
-    query = db.query(AsignacionSensor).filter(
+    query = select(AsignacionSensor).where(
         AsignacionSensor.id_trabajador == trabajador_id
     )
     
     if activas_solo:
-        query = query.filter(AsignacionSensor.fecha_desasignacion.is_(None))
+        query = query.where(AsignacionSensor.fecha_desasignacion.is_(None))
     
-    asignaciones = query.all()
+    result_asignaciones = await db.execute(query)
+    asignaciones = result_asignaciones.scalars().all()
     
     resultado = []
     for asig in asignaciones:
-        sensor = db.query(Sensor).filter(Sensor.id_sensor == asig.id_sensor).first()
+        result_sensor = await db.execute(select(Sensor).where(Sensor.id_sensor == asig.id_sensor))
+        sensor = result_sensor.scalars().first()
         resultado.append({
             "id_asignacion": asig.id_asignacion,
             "id_sensor": asig.id_sensor,
@@ -223,17 +234,18 @@ async def listar_asignaciones_trabajador(
 
 
 @router.get("/sensor/{sensor_id}")
-async def listar_asignaciones_sensor(
+async def list_sensor_assignments(
     sensor_id: int,
+    db: DbSession,
     current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db),
     activas_solo: bool = True
 ):
     """Listar todas las asignaciones de un sensor específico"""
-    sensor = db.query(Sensor).filter(
+    result_sensor = await db.execute(select(Sensor).where(
         Sensor.id_sensor == sensor_id,
         Sensor.id_empresa == current_user.id_empresa
-    ).first()
+    ))
+    sensor = result_sensor.scalars().first()
     
     if not sensor:
         raise HTTPException(
@@ -242,20 +254,22 @@ async def listar_asignaciones_sensor(
         )
     
     # Consultar asignaciones
-    query = db.query(AsignacionSensor).filter(
+    query = select(AsignacionSensor).where(
         AsignacionSensor.id_sensor == sensor_id
     )
     
     if activas_solo:
-        query = query.filter(AsignacionSensor.fecha_desasignacion.is_(None))
+        query = query.where(AsignacionSensor.fecha_desasignacion.is_(None))
     
-    asignaciones = query.all()
+    result_asignaciones = await db.execute(query)
+    asignaciones = result_asignaciones.scalars().all()
     
     resultado = []
     for asig in asignaciones:
-        trabajador = db.query(Trabajador).filter(
+        result_trabajador = await db.execute(select(Trabajador).where(
             Trabajador.id_trabajador == asig.id_trabajador
-        ).first()
+        ))
+        trabajador = result_trabajador.scalars().first()
         resultado.append({
             "id_asignacion": asig.id_asignacion,
             "id_trabajador": asig.id_trabajador,
@@ -270,16 +284,17 @@ async def listar_asignaciones_sensor(
 
 
 @router.get("/")
-async def listar_todas_asignaciones(
+async def list_all_assignments(
+    db: DbSession,
     current_user: Trabajador = Depends(get_current_user),
-    db: Session = Depends(get_db),
     activas_solo: bool = True
 ):
     """Listar todas las asignaciones de la empresa"""
     # Obtener todos los sensores de la empresa
-    sensores_empresa = db.query(Sensor.id_sensor).filter(
+    result_sensores = await db.execute(select(Sensor.id_sensor).where(
         Sensor.id_empresa == current_user.id_empresa
-    ).all()
+    ))
+    sensores_empresa = result_sensores.all()
     
     sensor_ids = [s[0] for s in sensores_empresa]
     
@@ -287,21 +302,25 @@ async def listar_todas_asignaciones(
         return []
     
     # Consultar asignaciones de estos sensores
-    query = db.query(AsignacionSensor).filter(
+    query = select(AsignacionSensor).where(
         AsignacionSensor.id_sensor.in_(sensor_ids)
     )
     
     if activas_solo:
-        query = query.filter(AsignacionSensor.fecha_desasignacion.is_(None))
+        query = query.where(AsignacionSensor.fecha_desasignacion.is_(None))
     
-    asignaciones = query.all()
+    result_asignaciones = await db.execute(query)
+    asignaciones = result_asignaciones.scalars().all()
     
     resultado = []
     for asig in asignaciones:
-        sensor = db.query(Sensor).filter(Sensor.id_sensor == asig.id_sensor).first()
-        trabajador = db.query(Trabajador).filter(
+        result_sensor = await db.execute(select(Sensor).where(Sensor.id_sensor == asig.id_sensor))
+        sensor = result_sensor.scalars().first()
+        
+        result_trabajador = await db.execute(select(Trabajador).where(
             Trabajador.id_trabajador == asig.id_trabajador
-        ).first()
+        ))
+        trabajador = result_trabajador.scalars().first()
         
         resultado.append({
             "id_asignacion": asig.id_asignacion,
