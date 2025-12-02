@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements desde backend/
-COPY backend/requirements.txt ./
+# Copiar requirements
+COPY requirements.txt ./
 
 # Crear entorno virtual e instalar dependencias
 RUN python -m venv /opt/venv && \
@@ -31,9 +31,9 @@ RUN useradd -m -u 1000 appuser
 # Copiar entorno virtual desde builder
 COPY --from=builder /opt/venv /opt/venv
 
-# Copiar código de la aplicación desde backend/
-COPY --chown=appuser:appuser backend/api/ ./api/
-COPY --chown=appuser:appuser backend/database/ ./database/
+# Copiar código de la aplicación
+COPY --chown=appuser:appuser api/ ./api/
+COPY --chown=appuser:appuser database/ ./database/
 
 # Cambiar a usuario no-root
 USER appuser
