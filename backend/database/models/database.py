@@ -11,8 +11,9 @@ from sqlalchemy import (
     UniqueConstraint,
     BIGINT,
     Date,
-    UUID,
 )
+from sqlalchemy.types import TypeDecorator, CHAR
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -20,6 +21,40 @@ from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.sql import func
 from api.config import settings
 import uuid
+
+class GUID(TypeDecorator):
+    """Tipo GUID independiente de la plataforma.
+    Usa el tipo UUID de PostgreSQL para PostgreSQL, de lo contrario usa
+    CHAR(36), almacenando como valores hexadecimales en cadena.
+    """
+    impl = CHAR
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(PGUUID())
+        else:
+            return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        elif dialect.name == 'postgresql':
+            return str(value)
+        else:
+            if not isinstance(value, uuid.UUID):
+                return str(uuid.UUID(value))
+            else:
+                return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        else:
+            if not isinstance(value, uuid.UUID):
+                return uuid.UUID(value)
+            else:
+                return value
 
 # Async Engine
 print(f"Creating Async Engine with URL: {settings.async_database_url}")
@@ -31,9 +66,9 @@ async_engine = create_async_engine(
         "command_timeout": 60,
         "prepared_statement_name_func": lambda: f"__asyncpg_{uuid.uuid4().hex}__",
     },
-    poolclass=QueuePool,
-    pool_size=20,
-    max_overflow=10,
+    poolclass=NullPool,
+    # pool_size=20,
+    # max_overflow=10,
 )
 AsyncSessionLocal = sessionmaker(
     async_engine, class_=AsyncSession, expire_on_commit=False
@@ -95,7 +130,7 @@ class Trabajador(Base):
     telefono = Column(String(20), nullable=True)
     rol = Column(String(50), nullable=False, index=True)
     user_id = Column(
-        UUID(as_uuid=True), unique=True, nullable=True, index=True
+        GUID(), unique=True, nullable=True, index=True
     )  # UUID de Supabase Auth
     smart_account_address = Column(String(42), unique=True, nullable=True, index=True)
     blockchain_role = Column(String(20), nullable=True)

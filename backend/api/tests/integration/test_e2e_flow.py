@@ -62,14 +62,9 @@ def test_full_sensor_flow(client, mock_supabase_and_jwt):
     user_data = {
         "email": "farmer@example.com",
         "password": "SecurePassword123!",
-        "nombre": "Juan",
-        "apellido": "Perez",
-        "dni": "12345678",
-        "empresa": {
-            "ruc": "20123456789",
-            "razon_social": "Agro Tech S.A.",
-            "email": "contact@agrotech.com",
-        },
+        "user_type": "empresa",
+        "nombre_empresa": "Agro Tech S.A.",
+        "ruc": "20123456789",
     }
 
     response = client.post("/api/v1/auth/register", json=user_data)
