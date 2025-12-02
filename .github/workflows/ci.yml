@@ -61,7 +61,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest httpx pytest-asyncio
+        pip install pytest httpx pytest-asyncio aiosqlite
 
     - name: Run Tests
       env:
@@ -71,7 +71,7 @@ jobs:
         POSTGRES_PASSWORD: test_password
         POSTGRES_DB: test_db
         SUPABASE_URL: https://example.supabase.co
-        SUPABASE_KEY: dummy_key
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         JWT_SECRET_KEY: super_secret_test_key
         ENVIRONMENT: test
         MQTT_BROKER: localhost
