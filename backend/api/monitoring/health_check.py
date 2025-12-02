@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import psutil
 from pydantic import BaseModel
@@ -44,12 +44,12 @@ class SystemInfo(BaseModel):
 class HealthMonitor:
     """Health monitoring class"""
     
-    start_time: float = datetime.utcnow().timestamp()
+    start_time: float = datetime.now(timezone.utc).timestamp()
     
     @staticmethod
     def get_uptime_seconds() -> float:
         """Get application uptime in seconds"""
-        return datetime.utcnow().timestamp() - HealthMonitor.start_time
+        return datetime.now(timezone.utc).timestamp() - HealthMonitor.start_time
     
     @staticmethod
     def get_memory_info() -> MemoryInfo:
@@ -91,28 +91,30 @@ class HealthMonitor:
         )
     
     @staticmethod
-    def check_database(db_session=None) -> str:
+    async def check_database(db_session=None) -> str:
         """Check database connectivity"""
         if db_session is None:
             return "unknown"
         
         try:
             # Try a simple query
-            db_session.execute("SELECT 1")
+            from sqlalchemy import text
+            await db_session.execute(text("SELECT 1"))
             return "healthy"
         except Exception as e:
             return f"unhealthy: {str(e)[:50]}"
     
     @staticmethod
-    def get_health_check(version: str = "1.0.0", db_session=None) -> HealthCheckResponse:
+    async def get_health_check(version: str = "1.0.0", db_session=None) -> HealthCheckResponse:
         """Get comprehensive health check"""
+        db_status = await HealthMonitor.check_database(db_session)
         return HealthCheckResponse(
             status="healthy",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             version=version,
             environment=os.getenv('ENVIRONMENT', 'development'),
             uptime_seconds=HealthMonitor.get_uptime_seconds(),
             system_info=HealthMonitor.get_system_info().model_dump(),
-            database_status=HealthMonitor.check_database(db_session),
+            database_status=db_status,
             api_status="operational"
         )

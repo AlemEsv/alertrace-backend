@@ -1,7 +1,7 @@
 import logging
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 from pythonjsonlogger import jsonlogger
 
@@ -12,7 +12,7 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
     def add_fields(self, log_record: Dict[str, Any], record: logging.LogRecord, message_dict: Dict[str, Any]) -> None:
         """Add custom fields to log record"""
         super(CustomJsonFormatter, self).add_fields(log_record, record, message_dict)
-        log_record['timestamp'] = datetime.utcnow().isoformat()
+        log_record['timestamp'] = datetime.now(timezone.utc).isoformat()
         log_record['level'] = record.levelname
         log_record['logger'] = record.name
         log_record['module'] = record.module
