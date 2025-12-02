@@ -100,13 +100,3 @@ jobs:
         tags: alertrace-backend:test
         cache-from: type=gha
         cache-to: type=gha,mode=max
-
-    - name: Build MQTT Bridge Image
-      uses: docker/build-push-action@v5
-      with:
-        context: ./iot-services/bridge
-        file: ./iot-services/bridge/Dockerfile
-        push: false
-        tags: alertrace-mqtt-bridge:test
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
